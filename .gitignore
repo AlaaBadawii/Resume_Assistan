@@ -1,0 +1,37 @@
+# Private candidate data — never commit
+data/private/
+
+# Generated personal resumes and rendered artifacts
+output/*
+!output/.gitkeep
+
+# Environment files containing secrets
+.env
+.env.*
+*.env
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python caches and tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*~

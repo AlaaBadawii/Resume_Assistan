@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "resume-assistant"
+version = "0.1.0"
+description = "Generate tailored, ATS-friendly resumes from a private master resume"
+readme = "README.md"
+requires-python = ">=3.12"
+# Runtime: needed by src/build_template.py and all tests
+dependencies = [
+    "python-docx>=1.2,<2",
+    "pydantic>=2,<3",
+]
+
+[project.optional-dependencies]
+# python -m pytest
+dev = [
+    "pytest>=9,<10",
+]
+# optional DOCX -> PDF preview (tests/render_template_pdf.py)
+preview = [
+    "weasyprint>=70,<71",
+]
+
+# Script-style project: src-layout with the resume_assistant package under src/.
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
