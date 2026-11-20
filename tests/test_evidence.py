@@ -182,3 +182,42 @@ def test_extraction_completeness_section_classification_reflects_unclassified(tm
     assert completeness.source_preservation_complete is True
     assert completeness.section_classification_complete is False
     assert completeness.complete is False
+
+
+def test_section_single_source_of_truth_in_evidence_builder(tmp_path):
+    source = tmp_path / 'sections_sot.docx'
+    builders.build_interleaved_document(source)
+    extractor = extractor_module.MasterResumeExtractor(source=source)
+    snapshot = extractor.extract()
+    from resume_assistant.section_detector import SectionDetector
+
+    detected = SectionDetector().detect(snapshot)
+    assert snapshot.sections == detected
+    # With sections=None, build_evidence_catalog must preserve existing snapshot.sections
+    catalog = evidence_module.build_evidence_catalog(snapshot, sections=None)
+    assert snapshot.sections == detected
+    assert catalog.extraction_completeness.sections_detected == len(detected)
+
+
+def test_contact_typing_for_unclassified_table_rows(tmp_path):
+    from docx import Document
+    from resume_assistant.models import EvidenceType
+
+    document = Document()
+    # Preamble table without heading (unclassified)
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = 'Candidate Name'
+    table.cell(0, 1).text = 'Email: candidate@example.org'
+    # Following section
+    document.add_heading('1. Technical Profile', level=1)
+    document.add_paragraph('Python development')
+    source = tmp_path / 'contact_table.docx'
+    builders.save(document, source)
+
+    extractor = extractor_module.MasterResumeExtractor(source=source)
+    snapshot = extractor.extract()
+    catalog = evidence_module.build_evidence_catalog(snapshot)
+
+    table_records = [r for r in catalog.evidence_records if r.table_context is not None]
+    assert len(table_records) == 1
+    assert table_records[0].evidence_type == EvidenceType.CONTACT

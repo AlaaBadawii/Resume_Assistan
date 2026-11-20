@@ -1,9 +1,9 @@
-# Extraction Architecture — Mission 2 through Mission 2.2.1
+# Extraction Architecture — Mission 2 through Mission 2.2.4
 
-Mission 2.2.1 is **IMPLEMENTED — AWAITING REVIEW**. Mission 2 remains **NOT
-APPROVED**. Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1 remain
-APPROVED. Verification history and the independent-review gate are recorded in
-`docs/PROJECT_STATUS.md`.
+Phase 2 is **APPROVED** as an aggregate deliverable by explicit human decision
+(2026-11-20). Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1 remain
+APPROVED. Verification history, individual sub-mission records, and the approval gate
+are recorded in `docs/PROJECT_STATUS.md`.
 
 ## Pipeline and responsibility boundaries
 
@@ -237,19 +237,47 @@ are negative document-local preorder IDs reset on each extraction. Paragraph
 and row evidence IDs remain SHA-256 over source hash plus those established
 identities. Cell paragraph positions and contributing-cell sources remain typed.
 
-Unchanged limitations remain for later finalization missions:
+## Structural fidelity and rich-text improvements (Mission 2.2.3 and 2.2.4)
 
-- Numbering format/override resolution still uses the existing algorithm,
-  now reading captured ZIP bytes. Combined starts, raw IDs, style inheritance,
-  parser-partial maps, and owning-numbering-part selection remain later work.
-- Hyperlink internal-anchor/per-link mapping and full field structure/evaluation
-  remain later work; existing coverage gaps make no new support claim.
-- Cell paragraph/nested-table interleaving, merge geometry/contact typing,
-  classification-source consistency, and CLI count labels remain later work.
-- Statistics remain incompletely scoped at deeper table levels and for media
-  and empty header/footer paragraphs. Shared default parts are now counted once;
-  this is not a complete F-14 statistics remediation.
-- Heading/evidence classification remains heuristic, not semantic proof.
+- **Horizontal and vertical cell merging:** `TableCell` models `grid_span`, `v_merge`,
+  and `h_merge` (`'restart'` / `'continue'`). Default `hMerge` without explicit `val`
+  defaults to `'continue'`.
+- **Cyclic style and unavailable numbering detection:** Cyclic style inheritance chains
+  are safely detected and diagnosed (`'Numbering style inheritance is cyclic'`) without
+  infinite recursion. Unavailable/unreadable numbering XML parts are diagnosed
+  (`'word/numbering.xml could not be read'`).
+- **Fields in tables and legacy paragraph properties:** Field sequences (`w:fldSimple`
+  and `w:fldChar` / `w:instrText`) inside table cell paragraphs are captured into
+  `field` and `field_instructions`. Legacy paragraph properties (runs, bold, font sizes,
+  alignment, bullets) remain fully preserved.
+- **Recursive all-depth statistics and media counters (WP-1 / F-14):**
+  Table statistics recurse to all nested levels for table, row, cell, and paragraph
+  counts, word counts, empty paragraphs, and hyperlinks. Media elements (`w:drawing`,
+  `w:txbxContent`, `w:object`, `a:blip`, `v:imagedata`) are counted across body and
+  header/footer parts into `drawing_count`, `textbox_count`, `embedded_object_count`,
+  and `image_count`. Empty header/footer paragraphs are recorded in `empty_paragraph_count`.
+- **Section single source of truth and pair invariants (WP-2 / F-22):**
+  `snapshot.sections` is the sole source of truth for section assignment and
+  unclassified block detection. In `publication_integrity.py`, `validate_publication_pair`
+  strictly verifies that catalog section references exist in snapshot sections, and that
+  `completeness.unclassified_block_indexes` agrees with snapshot sections.
+- **Scope-explicit CLI summary labels (WP-3 / F-23):**
+  The CLI `extract-master` summary labels all paragraph scopes explicitly:
+  `body_paragraphs`, `table_paragraphs`, `header_paragraphs`, `footer_paragraphs`,
+  `total_paragraphs`, removing ambiguous aggregate labels.
+- **Contact typing for table rows and ragged-row support (WP-4 / F-24):**
+  Unclassified table rows containing contact information (e.g. email, phone, location,
+  links) in any cell or line are typed as `EvidenceType.CONTACT`. Ragged table rows
+  (where individual rows contain fewer physical cells than `column_count`) are supported
+  and verified in publication pair integrity checks.
+- **Bounded cleanup (WP-6 / F-18):**
+  Unused module imports and dead code in `evidence.py` and `extractor.py` are cleaned up
+  while preserving all public and tested interfaces.
+
+Remaining limitations:
+- Heading and evidence classification remains heuristic, not semantic proof.
+- Full Word extension interpretation (e.g. drawings, math, embedded objects) remains
+  intentionally uninterpreted and conservatively diagnosed as coverage gaps.
 
 ## Private persistence and failure guarantees
 
@@ -264,10 +292,12 @@ replacement/cleanup prevent symlink redirection. Linux is verified; unsupported
 platforms fail closed. Pinned handles do not prevent every directory-renaming
 window or privileged/direct modification.
 
-Atomicity is still **per file**, not transactional across the pair. A second
-replacement failure may leave the first artifact new and the second old.
-Two-artifact publication belongs to Mission 2.2.2. No fsync/power-loss durability
-or fully transactional read/write guarantee is claimed.
+Reader-visible pair consistency is enforced through the publication system
+(Mission 2.2.2): artifacts are written into an immutable generation directory
+and committed atomically by replacing the manifest at the `--output` address.
+Readers loading artifacts via `load_committed_pair` never see a mismatched or
+partial pair. Operating-system filesystem durability across sudden power loss
+is not guaranteed or claimed (no explicit `fsync` is issued).
 
 ## Historical descriptions and verification
 

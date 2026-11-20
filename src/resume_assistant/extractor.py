@@ -13,14 +13,16 @@ from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from lxml import etree
 
-from resume_assistant import models
 from resume_assistant.document_coverage import DocumentCoverage
 from resume_assistant.models import (
+    SCHEMA_VERSION,
     DocumentBlock,
     DocumentSnapshot,
     DocumentStatistics,
     HeaderFooterPart,
+    HyperlinkBlock,
     ParagraphBlock,
+    RunBlock,
     TableBlock,
     TableCell,
     UnsupportedContent,
@@ -194,7 +196,7 @@ class MasterResumeExtractor:
         )
 
         return DocumentSnapshot(
-            schema_version=models.SCHEMA_VERSION,
+            schema_version=SCHEMA_VERSION,
             source_filename=captured.filename,
             source_sha256=captured.sha256,
             extraction_timestamp=datetime.now(timezone.utc),
@@ -397,7 +399,7 @@ class MasterResumeExtractor:
             index=index,
             text=text,
             style=style_name,
-            runs=[models.RunBlock(**run) for run in runs],
+            runs=[RunBlock(**run) for run in runs],
             bold=bold,
             italic=None,
             font_size_pt=font_size_pt,
@@ -456,10 +458,10 @@ class MasterResumeExtractor:
 
     def _paragraph_hyperlinks(
         self, paragraph, document, part=None
-    ) -> List[models.HyperlinkBlock]:
+    ) -> List[HyperlinkBlock]:
         source_part = part if part is not None else document.part
         relationships = source_part.rels
-        found: List[models.HyperlinkBlock] = []
+        found: List[HyperlinkBlock] = []
         for element in paragraph._p.iter():
             if element.tag != (W_NS + 'hyperlink'):
                 continue
@@ -484,7 +486,7 @@ class MasterResumeExtractor:
                         f'hyperlink {anchor or rid} has unresolved relationship {rid}'
                     )
             found.append(
-                models.HyperlinkBlock(
+                HyperlinkBlock(
                     text=''.join(text_parts),
                     anchor=anchor,
                     relationship_id=relationship_id,

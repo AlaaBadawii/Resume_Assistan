@@ -19,6 +19,7 @@ from resume_assistant.models import (
     TableBlock,
 )
 from resume_assistant.publication import PublicationError
+from resume_assistant.section_detector import SectionDetector
 
 
 def validate_snapshot_structure(snapshot: DocumentSnapshot) -> None:
@@ -137,6 +138,11 @@ def validate_publication_pair(
     if completeness.sections_detected != len(snapshot.sections):
         raise PublicationError(
             'Catalog sections-detected counter disagrees with snapshot sections.'
+        )
+    expected_unclassified = SectionDetector().find_unclassified(snapshot)
+    if completeness.unclassified_block_indexes != expected_unclassified:
+        raise PublicationError(
+            'Catalog unclassified block indexes disagree with snapshot sections.'
         )
     if completeness.source_preservation_complete and snapshot.unsupported_content:
         raise PublicationError(
@@ -283,6 +289,16 @@ def _validate_record_text(
         expected_text = '\n'.join(meaningful)
         if record.original_content != expected_text:
             raise PublicationError('Evidence record text disagrees with snapshot table row.')
+        if record.table_context is not None:
+            ctx = record.table_context
+            if ctx.table_index != location.table_index:
+                raise PublicationError('Table context table index disagrees with source location.')
+            if ctx.row_index != location.row_index:
+                raise PublicationError('Table context row index disagrees with source location.')
+            if ctx.column_count != table.column_count:
+                raise PublicationError('Table context column count disagrees with table.')
+            if ctx.cell_texts != cell_texts:
+                raise PublicationError('Table context cell texts disagree with table row cells.')
     else:
         raise PublicationError('Evidence record references an unknown block type.')
 
@@ -318,6 +334,9 @@ def _validate_section_references(
     section_ids = {
         section.identifier for section in snapshot.sections if section.identifier
     }
+    for ref in catalog.section_references:
+        if ref not in section_ids:
+            raise PublicationError('Catalog section references contain an unknown section.')
     for record in catalog.evidence_records:
         if record.section_reference is not None and record.section_reference not in section_ids:
             raise PublicationError('Evidence record references a missing section.')

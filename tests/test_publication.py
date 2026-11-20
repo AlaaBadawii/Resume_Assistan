@@ -529,3 +529,58 @@ def test_legacy_absent_vs_explicit_details_distinguished():
     model_explicit = CandidateEvidenceCatalog.model_validate_json(json.dumps(data_explicit), strict=True)
     assert 'unsupported_content' in model_explicit.extraction_completeness.model_fields_set
     assert model_absent.extraction_completeness == model_explicit.extraction_completeness
+
+
+def test_validate_publication_pair_rejects_disagreeing_unclassified_blocks():
+    from resume_assistant.publication_integrity import validate_publication_pair
+
+    item = _make_project('unclassified-disagreement')
+    with patch.object(cli_module, 'PROJECT_ROOT', item['root']):
+        snapshot, catalog, _, _ = load_committed_pair(cli_module.PROJECT_ROOT, item['catalog'])
+        catalog.extraction_completeness.unclassified_block_indexes = [9999]
+        with pytest.raises(PublicationError, match='Catalog unclassified block indexes disagree'):
+            validate_publication_pair(snapshot, catalog)
+
+
+def test_validate_publication_pair_rejects_unknown_section_references():
+    from resume_assistant.publication_integrity import validate_publication_pair
+
+    item = _make_project('section-ref-disagreement')
+    with patch.object(cli_module, 'PROJECT_ROOT', item['root']):
+        snapshot, catalog, _, _ = load_committed_pair(cli_module.PROJECT_ROOT, item['catalog'])
+        catalog.section_references.append('phantom-section-id')
+        with pytest.raises(PublicationError, match='Catalog section references contain an unknown section'):
+            validate_publication_pair(snapshot, catalog)
+
+
+def test_ragged_table_rows_validate_successfully_in_publication_pair(tmp_path):
+    from docx import Document
+    from resume_assistant.extractor import MasterResumeExtractor
+    from resume_assistant.publication_integrity import (
+        validate_catalog_structure,
+        validate_publication_pair,
+        validate_snapshot_structure,
+    )
+
+    document = Document()
+    document.add_heading('1. Technical Profile', level=1)
+    table = document.add_table(rows=2, cols=3)
+    table.rows[0].cells[0].text = 'r0c0'
+    table.rows[0].cells[1].text = 'r0c1'
+    table.rows[0].cells[2].text = 'r0c2'
+    table.rows[1].cells[0].text = 'r1c0'
+    # Delete cell 1 and cell 2 from row 1 in oxml to make row 1 ragged (1 cell)
+    table.rows[1]._tr.remove(table.rows[1].cells[2]._tc)
+    table.rows[1]._tr.remove(table.rows[1].cells[1]._tc)
+
+    source = tmp_path / 'ragged.docx'
+    builders.save(document, source)
+    snapshot = MasterResumeExtractor(source).extract()
+    assert snapshot.blocks[1].table.column_count == 3
+    assert len(snapshot.blocks[1].table.rows[0]) == 3
+    assert len(snapshot.blocks[1].table.rows[1]) == 1
+
+    catalog = evidence_module.build_evidence_catalog(snapshot)
+    validate_snapshot_structure(snapshot)
+    validate_catalog_structure(catalog)
+    validate_publication_pair(snapshot, catalog)

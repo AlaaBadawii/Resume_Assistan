@@ -4,16 +4,11 @@ Local Python project that will eventually take a Job Description and generate
 a customized, ATS-friendly PDF resume using verified information from a
 private Master Resume.
 
-**Status: Missions 1, 1.1, 1.2, 2, and 1.3 implemented — inspection,
-foundations, A4-configurable template with semantic headings, isolated
-Python 3.12 environment, deterministic extraction layer, and Git/handoff
-infrastructure. Mission 2.1.2's integrity/safety remediation is APPROVED.
-Missions 3.1 and 3.1.1 are APPROVED after remediation and human closeout approval.
-Missions 3.2 and 3.2.1 are APPROVED after remediation, independent review, and
-explicit human confirmation. Mission 2.2.1's privacy/source-binding/coverage
-remediation is IMPLEMENTED — AWAITING REVIEW.
-Mission 2 is NOT APPROVED; parent Mission 3 remains in progress and not approved.
-Resume generation does not exist yet. See `docs/PROJECT_STATUS.md`.**
+**Status: Phase 2 (Candidate intelligence & evidence extraction) is APPROVED as an
+aggregate deliverable by explicit human decision (2026-11-20), encompassing Missions 2
+through 2.2.4. Mission 2.1.2 is APPROVED. Missions 3.1 and 3.1.1 are APPROVED. Missions
+3.2 and 3.2.1 are APPROVED. Parent Mission 3 remains in progress and not approved.
+Resume generation (Phase 4) does not exist yet. See `docs/PROJECT_STATUS.md`.**
 
 ## Project structure
 

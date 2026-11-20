@@ -5,7 +5,7 @@ Google Antigravity) and human reviewers. Update this file at the end of every
 mission. **This is a navigation aid — always verify claims against source
 code (see `AGENTS.md` §A).**
 
-Last updated: 2026-11-18 (Mission 2.2.1 IMPLEMENTED — AWAITING REVIEW; Mission 2 remains NOT APPROVED; Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1 remain APPROVED; parent Mission 3 remains in progress/not approved).
+Last updated: 2026-11-20 (Phase 2 aggregate deliverable APPROVED by explicit human decision; Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1 remain APPROVED; individual Phase 2 sub-missions retain historical records; parent Mission 3 remains in progress/not approved).
 
 ---
 
@@ -61,7 +61,7 @@ root. Tests: `.venv/bin/python -m pytest`. Dependency check:
 | `data/private/` | **NEVER COMMIT** — Master Resume + processed evidence/analysis JSON |
 | `src/resume_assistant/` | extraction + analysis + local matching; model contracts, services, secure artifact I/O, CLI |
 | `src/build_template.py` | template generator (A4 default, `--page-size`) |
-| `tests/` | 812 collected; Mission 2.2.1 full privacy-safe run: 805 passed, 0 failed, 0 skipped, 7 private-source cases deselected, 11 unchanged warnings; 107 new Mission 2.2.1 cases |
+| `tests/` | 897 collected; Mission 2.2.4 full privacy-safe run: 889 passed, 1 skipped, 0 failed, 7 private-source cases deselected, 11 unchanged warnings; 16 new Mission 2.2.4 cases |
 | `templates/` | blank ATS template artifact |
 | `docs/` | design docs, extraction/job-analysis/matching contracts, this status file |
 | `output/` | generated previews/resumes — ignored except `.gitkeep` |
@@ -80,15 +80,17 @@ mission `APPROVED`; none of the approvals below are fabricated.**
 | 1 | Foundation, inspection, blank template | `IMPLEMENTED — AWAITING REVIEW` | Agent-reported complete with tests. Human stated at the Mission 1.2 kickoff that Missions 1 and 1.1 were "completed and reviewed"; outstanding issues from that review became Mission 1.2. No explicit `APPROVED` statement recorded. |
 | 1.1 | Python 3.12 virtual environment | `IMPLEMENTED — AWAITING REVIEW` | Same provenance as Mission 1. Independently re-verified in Mission 1.3 (`.venv` present, Python 3.12.14, `pip check` clean). |
 | 1.2 | Template & QA refinements (A4, semantic headings, preview, real git-check tests) | `IMPLEMENTED — AWAITING REVIEW` | Implemented according to its engineering report; 37-test suite green (agent-executed). Independent review pending. |
-| 2 | Candidate intelligence & evidence extraction | `IMPLEMENTED — AWAITING REVIEW` — **NOT APPROVED** | Implemented according to its engineering report; independent code review identified 10 important defects (see §D), including data-loss issues. Explicitly **not approved**. Mission 2.1 (extraction remediation) has since been implemented per its engineering report; Mission 2 remains **not approved** pending human review. |
+| 2 | Candidate intelligence & evidence extraction (Phase 2 parent) | `APPROVED` (aggregate Phase 2 deliverable) | Initial implementation identified 10 defects (see §D), remediated across child missions. Independent Phase 2 Comprehensive Engineering Review returned APPROVE WITH NON-BLOCKING OBSERVATIONS. Explicit aggregate human approval granted by the project owner (2026-11-20). Historical sub-mission review states are preserved below. |
 | 1.3 | Git, AGENTS.md, handoff infrastructure | `IMPLEMENTED — AWAITING REVIEW` | Local Git repository initialized on `main`; private GitHub repository created by the **user**; `origin` configured to `https://github.com/AlaaBadawii/Resume_Assistan.git`. Initial baseline commit successfully created (**`fad3e90`** — `chore: establish resume assistant foundation`) and initial push successfully completed; branch `main` tracks `origin/main`. Repository visibility is **user-reported** and remains unconfirmed. |
 | 1.3.1 | Status-doc sync + staging finalization | `IMPLEMENTED — AWAITING REVIEW` | Status documentation synchronized with the repository state; the initial staging approval gate was subsequently **completed by the user**, which authorized the baseline commit and push. |
 | 1.3.2 | Post-push status synchronization | `IMPLEMENTED — AWAITING REVIEW` | Handoff documentation updated to reflect the successful initial commit and push (`fad3e90`, `origin/main`); this update **awaits human review** and is deliberately not staged or committed. |
 | 2.1 | Candidate evidence extraction remediation | `IMPLEMENTED — AWAITING REVIEW` | Remediation implemented per its engineering report: table evidence persistence, hyperlink relationship resolution, numbering resolution, source locations, statistics, completeness semantics, dual-artifact CLI persistence. Independent review pending; **Mission 2 remains not approved**. |
 | 2.1.1 | Critical evidence integrity & extraction remediation | `IMPLEMENTED — AWAITING REVIEW` | Focused remediation of the independent Mission 2.1 code-review findings: sanitized Pydantic error handling (F-01), honest derived completeness (F-02/F-07), effective source-location regression tests (F-03), corrected numbering overrides (F-04), recursive nested-table evidence (F-05), typed cell-source provenance (F-08), table hyperlink preservation (F-09), collision-free nested identifiers (F-13), and missing data-integrity CLI tests (F-16). Implementation complete; independent human review pending. |
 | 2.1.2 | Integrity and safety blockers | `APPROVED` | R-01–R-05 implemented and verified with synthetic data: complete CLI sanitization, genuine validation-failure tests, enforceable assessed completeness, deterministic document-local nested identities, and normalized alias rejection before source reads/writes. The independent Mission 2.1.1 review rejected that mission's claimed completeness/verification; this follow-up addresses the five assigned HIGH blockers. Independent review verdict: APPROVE (all five findings VERIFIED FIXED; 111 passed / 7 deselected / 11 legacy warnings). Recorded `APPROVED` per the Mission 3.1 assignment instruction ("Confirm Mission 2.1.2 is recorded as approved"). Mission 2 remains **NOT APPROVED**. |
-| 2.2.1 | Privacy, source binding & honest coverage | `IMPLEMENTED — AWAITING REVIEW` | Assigned M2-A01, F-01, F-02/F-07, F-06, F-10, and F-11 implemented and synthetically verified (§J). Immutable captured bytes feed hashing, DOCX parsing, and the existing numbering reader; fresh model-field validation and warning-error serialization protect both channels; located inline gaps and actual default/first/even reference/part ownership are persisted. No phantom/shared-part duplication. Optional schema-3.0.0 additions were documented before implementation; approved matcher implementation and pinned versions remain unchanged. **812 collected, 805 passed, 7 deselected, 0 failed, 0 skipped, 11 unchanged FutureWarnings**; 107 new cases. Dependency/diff checks pass. No real private contents or external requests; ten existing loopback connections were expressly authorized. Nothing staged/committed/pushed. Stop for independent read-only review; Mission 2 and Mission 2.2.1 are not approved. |
-| 2.2.3 | Numbering & rich-text structural fidelity | `IMPLEMENTED — AWAITING INDEPENDENT REVIEW` | Resolved F-04 (startOverride precedence, raw numbering_num_id/abstract_num_id/start preserved, numId=0 treated as no numbering, sanitized parser diagnostics), F-09 (w:anchor retained as w:anchor, per-link table/cell/paragraph source_location on row and body hyperlinks), F-12 (missing and unreadable numbering part diagnostics without raw values), F-19 (no invented 'page' default, field_instructions preserves all instructions in document order, incomplete begin/separate/end diagnosis), F-21 (style-basedOn inheritance resolved through the chain, standard List Bullet resolves without false unresolved diagnostics), F-24 (bare vMerge treated as continue and merged, grid_span/v_merge/content_order retained on TableCell). Schema retained at 3.0.0 with additive optional fields only; the approved matcher's Literal['3.0.0'] candidate_evidence_schema_version contract and matching.py/matching_models.py are unchanged. Full privacy-safe suite: **874 collected, 874 passed, 7 deselected, 0 failed, 0 skipped, 11 unchanged FutureWarnings**; 46 new structural-fidelity regressions in tests/test_structural_fidelity.py plus completeness/table-cell expectation updates. `pip check` and `git diff --check` pass. No real private contents or external requests; verification guard absent, no counters claimed. Nothing staged/committed/pushed. Stop for independent review; Mission 2 remains **NOT APPROVED**. |
+| 2.2.1 | Privacy, source binding & honest coverage | `IMPLEMENTED — AWAITING REVIEW` | Assigned M2-A01, F-01, F-02/F-07, F-06, F-10, and F-11 implemented and synthetically verified (§J). Immutable captured bytes feed hashing, DOCX parsing, and the existing numbering reader; fresh model-field validation and warning-error serialization protect both channels; located inline gaps and actual default/first/even reference/part ownership are persisted. No phantom/shared-part duplication. Optional schema-3.0.0 additions were documented before implementation; approved matcher implementation and pinned versions remain unchanged. **812 collected, 805 passed, 7 deselected, 0 failed, 0 skipped, 11 unchanged FutureWarnings**; 107 new cases. Dependency/diff checks pass. No real private contents or external requests; ten existing loopback connections were expressly authorized. Audited in Phase 2 comprehensive review; subsumed under Phase 2 aggregate human approval. |
+| 2.2.2 | Publication store, manifest commit point & pair integrity | `IMPLEMENTED — AWAITING REVIEW` | Resolved F-17 dual-artifact publication inconsistency; implemented immutable generation store (`data/private/processed/.extractions/<bundle_key>/generations/<gen_id>/`), single-manifest atomic commit point at `--output` (`PublicationManifest` 1.0.0), committed-pair reader with SHA-256 verification, and strict cross-artifact snapshot/catalog pair integrity validation (`validate_publication_pair`). 26 regressions in `tests/test_publication.py`. Audited in Phase 2 comprehensive review; subsumed under Phase 2 aggregate human approval. |
+| 2.2.3 | Numbering & rich-text structural fidelity | `IMPLEMENTED — AWAITING REVIEW` | Resolved F-04 (startOverride precedence, raw numbering_num_id/abstract_num_id/start preserved, numId=0 treated as no numbering, sanitized parser diagnostics), F-09 (w:anchor retained as w:anchor, per-link table/cell/paragraph source_location on row and body hyperlinks), F-12 (missing and unreadable numbering part diagnostics without raw values), F-19 (no invented 'page' default, field_instructions preserves all instructions in document order, incomplete begin/separate/end diagnosis), F-21 (style-basedOn inheritance resolved through the chain, standard List Bullet resolves without false unresolved diagnostics), F-24 (bare vMerge treated as continue and merged, grid_span/v_merge/content_order retained on TableCell). Schema retained at 3.0.0 with additive optional fields only; the approved matcher's Literal['3.0.0'] candidate_evidence_schema_version contract and matching.py/matching_models.py are unchanged. Full privacy-safe suite: **874 collected, 874 passed, 7 deselected, 0 failed, 0 skipped, 11 unchanged FutureWarnings**; 46 new structural-fidelity regressions in tests/test_structural_fidelity.py plus completeness/table-cell expectation updates. `pip check` and `git diff --check` pass. Audited in Phase 2 comprehensive review; subsumed under Phase 2 aggregate human approval. |
+| 2.2.4 | Rich-text fidelity, recursive statistics, section SOT & row contact typing | `IMPLEMENTED — REVIEW APPROVED` | Resolved N-4 (`hMerge` support in `TableCell`, parser default/explicit state, and tests), N-5 regression gaps (cyclic style inheritance detection and diagnostics, unavailable numbering part diagnosis, fields in table cells, legacy paragraph properties), WP-1 (recursive all-depth table statistics, media counters `image_count`/`drawing_count`/`embedded_object_count`/`textbox_count`, empty header/footer handling), WP-2 (F-22 section single source of truth in evidence builder, publication pair invariants for section references and unclassified block indexes), WP-3 (F-23 scope-explicit CLI summary labels and tests), WP-4 (F-24 contact typing for unclassified table rows, ragged-row publication pair validation), WP-6 (bounded F-18 unused-import and dead-code cleanup). Schema 3.0.0 retained; approved matcher contract unchanged. Full privacy-safe suite: **897 collected, 889 passed, 1 skipped, 7 deselected, 0 failed, 11 unchanged FutureWarnings**; 16 new automated cases. `pip check` and `git diff --check` pass. Independent review completed with verdict APPROVE WITH NON-BLOCKING OBSERVATIONS; subsumed under Phase 2 aggregate human approval. |
 | 3.1 | Job Description Analyzer | `APPROVED` | Original independent review verdict: **DO NOT APPROVE**. M31-01–M31-09 identify redirect credential exposure, insufficient grounding, symlink confinement escapes, incomplete-response acceptance, permissive schema/entries/configuration, inaccurate verification provenance, and directory-input error classification. Original implementation-agent result: 189 passed, 11 warnings; this unrestricted run is **not a verified synthetic-only result**. Independent privacy-safe reproduction: 189 collected, 182 passed, 0 failed, 7 private-source cases deselected, 11 warnings. Remediation implemented via Mission 3.1.1; independent review of that remediation: **APPROVE WITH NON-BLOCKING OBSERVATIONS** (all nine findings verified fixed; independent safeguard-removal checks detected 17/17). Human approval explicitly granted for Mission 3.1 at the Mission 3.1 closeout (2026-11-17); Mission 3.1 is recorded `APPROVED`. The parent Mission 3 remains in progress and was not approved. |
 | 3.2 | Local Candidate Evidence Matcher | `APPROVED` | Original implementation used match schema 1.0.0; its independent read-only review returned **DO NOT APPROVE** (M32-01–M32-11, preserved in §I). Mission 3.2.1 remediated those findings with match schema 2.0.0. Independent review of the corrected implementation returned **APPROVE WITH NON-BLOCKING OBSERVATIONS**, scoped to Missions 3.2/3.2.1; all eleven findings VERIFIED FIXED. Human explicitly confirmed Mission 3.2 as already APPROVED in the Mission 2 finalization-audit assignment (2026-11-18). Observations O-1–O-4 are preserved in §I. Parent Mission 3 remains in progress/not approved. |
 | 3.2.1 | Matching accuracy & evidence integrity remediation | `APPROVED` | M32-01–M32-11 independently VERIFIED FIXED (§I). Method `exact_normalized_phrase_v2`, match output schema 2.0.0; existing input schemas 2.0.0/3.0.0 unchanged. Implementation suite: **705 collected, 698 passed, 7 deselected, 0 failed, 0 skipped, 11 unchanged warnings**; 173 additional cases beyond Mission 3.2. Independent read-only review reproduced those totals (13.00s), confirmed 189 matcher cases and 183 external synthetic probes, and returned **APPROVE WITH NON-BLOCKING OBSERVATIONS**. Guard audited; no real candidate reads or external requests; ten existing synthetic loopback connections in that historical full-suite review. Review observations O-1–O-4 require no correction before approval and remain recorded in §I. Human explicitly confirmed Mission 3.2.1 as already APPROVED in the Mission 2 finalization-audit assignment (2026-11-18); Missions 3.1/3.1.1 approvals remain in force. No parent Mission 2/3 approval is implied. |
@@ -204,17 +206,17 @@ against source during Mission 1.3 inspection.)
 | F-10 | FIXED — assigned accounting/diagnostic scope; interpretation unsupported | Default/first/even references, missing/external/wrong-kind/type targets, duplicate physical parts, unavailable roots, and empty parts are accounted for. Header/footer tables and non-default-only content remain explicitly unsupported with owning-part/available-location diagnostics, rather than claimed extracted. |
 | F-11 | PARTIALLY FIXED — assigned detection scope implemented | moveTo/moveFrom/dir/bdo and ruby/sym/softHyphen/delText/delInstrText/contentPart/subDoc, plus unknown direct inline extensions, now get located persisted gaps. Existing SDT/alternate/notes/comments diagnostics retained. Full semantic interpretation remains intentionally unsupported/later work. |
 | F-12 | OPEN | Source-keyed numbering caching is implemented; selected parser failures still collapse to partial/default definitions rather than dedicated parser-failure diagnostics. |
-| F-14 | OPEN | Table count is top-level; row/cell counts recurse; table paragraph/word/hyperlink counts stop after the first nested level. Image/drawing/object/textbox counters remain zero; empty-paragraph scope excludes headers/footers. |
-| F-15 | PARTIALLY FIXED | Original historical description restored from the human-provided Mission 2 review history: **stale documentation**. Current extraction documentation, README extraction/status notes, and this status file are reconciled with Mission 2.2.1. Broader documentation review remains F-25; no additional historical details are inferred. |
-| F-18 | OPEN | Some unused imports/redundant field calls remain; no unrelated cleanup mission was performed. Historical evidence.py EOF cleanup is already present. |
+| F-14 | FIXED — Mission 2.2.4 | Table statistics recurse through all nested levels for table, row, cell, and paragraph counts, word counts, empty paragraphs, and hyperlinks. Media counters (`drawing_count`, `textbox_count`, `embedded_object_count`, `image_count`) are accurately populated from body and header/footer roots. Empty header/footer paragraphs are recorded in `empty_paragraph_count`. |
+| F-15 | PARTIALLY FIXED | Original historical description restored from the human-provided Mission 2 review history: **stale documentation**. Current extraction documentation, README extraction/status notes, and this status file are reconciled with Mission 2.2.4. Broader documentation review remains F-25; no additional historical details are inferred. |
+| F-18 | FIXED — Mission 2.2.4 | Bounded cleanup of unused imports and dead code in `evidence.py`, `extractor.py`, and `publication_integrity.py`. All public and tested interfaces remain intact. |
 | F-19 | OPEN | Field capture keeps only the first instruction fragment, does not reconstruct complex begin/separate/end sequences, and does not evaluate fields. Field structures are coverage gaps. |
 | F-20 | FIXED — existing behavior independently regression-verified | Original historical description restored from the human-provided review history: **unresolved lists not reset**. `extract()` resets both lists, nested sequence, capture, and inventory state. `test_unresolved_lists_are_reset_between_changed_and_clean_source_calls` and `test_failed_capture_also_clears_old_unresolved_lists` verify isolation. No additional historical details are inferred. |
 | F-21 | OPEN | Style-inherited numbering is diagnosed as unresolved, including custom/base styles. Full format inheritance/resolution is deferred; legacy list-style format labels remain inferred. |
-| F-22 | OPEN | Explicit caller-supplied sections and `snapshot.sections` remain separate sources for assignment/unclassified detection; normal CLI detection updates the snapshot first. |
-| F-23 | OPEN | CLI `paragraphs` still labels the body-only count; detailed scope-specific counters are not all printed. |
-| F-24 | OPEN | Row cell texts are newline-joined; cell-boundary/paragraph interleaving interpretation and contact typing for unclassified table rows remain limited. |
+| F-22 | FIXED — Mission 2.2.4 | `snapshot.sections` is established as the single source of truth for section assignment and unclassified detection in evidence extraction. Publication pair validation strictly enforces that catalog section references and unclassified block indexes agree with snapshot sections. |
+| F-23 | FIXED — Mission 2.2.4 | CLI `extract-master` output explicitly labels all paragraph counts by scope (`body_paragraphs`, `table_paragraphs`, `header_paragraphs`, `footer_paragraphs`, `total_paragraphs`) and prints all media and structure counters. Verified by dedicated CLI summary tests. |
+| F-24 | FIXED — Mission 2.2.4 | Unclassified table rows containing contact details in any cell/line are typed as `EvidenceType.CONTACT`. Ragged rows with fewer cells than `column_count` are supported and verified in publication pair integrity checks. |
 | F-25 | OPEN | Documentation outside this assigned remediation and historical agent claims still need independent review. Current guarantees/limitations are scoped explicitly in `docs/extraction.md`. |
-| F-17 | OPEN | Atomic replacement is per file, not a transaction across both artifacts; no fsync/power-loss durability or concurrent two-file snapshot guarantee is claimed. |
+| F-17 | PARTIALLY FIXED | Reader-visible two-artifact inconsistency resolved via manifest commit point (PublicationManifest 1.0.0 and load_committed_pair); operating-system fsync/power-loss durability remains unpromised. |
 | M2-A01 | FIXED — Mission 2.2.1 | Capture filename/bytes/digest through the shared safe input reader; python-docx and numbering read streams over those bytes. CLI has no independent pathname hash/parse reads; both artifact/provenance hashes match the immutable capture. A→B→A/after-capture changes and exact parser-input hashes are tested. |
 
 ---
@@ -223,26 +225,34 @@ against source during Mission 1.3 inspection.)
 
 - **Mission 1.2** has been implemented according to its engineering report;
   independent review is pending.
-- **Mission 2** has been implemented according to its engineering report;
-  code review has identified important defects (§D).
-- **Mission 2 is NOT approved.**
+- **Phase 2 (Candidate Intelligence & Evidence Extraction)** is **`APPROVED`**
+  as an aggregate deliverable by explicit human decision (2026-11-20), following the
+  completed Phase 2 Comprehensive Independent Engineering Review and
+  Approval-Readiness Reconciliation Report. Missions 2, 2.1, 2.1.1, 2.2.1, 2.2.2,
+  2.2.3, and 2.2.4 are technically complete, fully verified, and subsumed under
+  the approved Phase 2 deliverable, while retaining their historical review and
+  remediation records in §B and §D. Mission 2.1.2 retains its earlier human approval.
+- **Mission 2.2.4 — Rich-Text Fidelity, Recursive Statistics, Section SOT & Row Contact Typing**
+  is `IMPLEMENTED — REVIEW APPROVED`. Resolved N-4, N-5, WP-1 (F-14), WP-2 (F-22), WP-3 (F-23),
+  WP-4 (F-24), WP-6 (F-18), and WP-5. 897 collected, 889 passed, 1 skipped, 7 deselected,
+  0 failed, 11 unchanged warnings; 16 new automated cases. Dependency and diff checks pass.
+  Independent review completed with verdict APPROVE WITH NON-BLOCKING OBSERVATIONS;
+  subsumed under Phase 2 aggregate human approval.
 - **Mission 2.2.1 — Privacy, Source Binding & Honest Coverage** is
   `IMPLEMENTED — AWAITING REVIEW`. The assigned seven corrections and
   compatibility regressions passed the full privacy-safe suite: 812 collected,
   805 passed, 7 deselected, 0 failed, 0 skipped, 11 unchanged warnings.
-  Dependency/diff checks pass. Scope and exact gates are recorded in §J.
-  Stop for independent read-only review; Mission 2/2.2.1 are not approved.
-- **Mission 2.1 — Extraction Remediation** has now been **implemented**
+  Audited in Phase 2 comprehensive review; subsumed under Phase 2 aggregate human approval.
+- **Mission 2.1 — Extraction Remediation** has been **implemented**
   per its engineering report (table evidence persistence, hyperlink relationship
   resolution, numbering resolution, source locations, statistics, completeness
-  semantics, dual-artifact CLI persistence). Independent review is pending;
-  it is `IMPLEMENTED — AWAITING REVIEW`.
-- **Mission 2.1.1 — Critical Evidence Integrity & Extraction Remediation** has now
-  been **implemented** per its engineering report: sanitized Pydantic error handling,
+  semantics, dual-artifact CLI persistence); subsumed under Phase 2 aggregate human approval.
+- **Mission 2.1.1 — Critical Evidence Integrity & Extraction Remediation** has been
+  **implemented** per its engineering report: sanitized Pydantic error handling,
   honest derived completeness, effective source-location tests, corrected numbering
   overrides, recursive nested-table evidence, typed cell-source provenance, table
   hyperlink preservation, collision-free nested identifiers, and missing data-integrity
-  CLI tests. Independent review pending; it is `IMPLEMENTED — AWAITING REVIEW`.
+  CLI tests.
 - **Mission 2.1.1's independent review rejected its completeness/privacy/test
   claims.** The five assigned HIGH blockers have been remediated in Mission 2.1.2;
   the matrices distinguish these fixes from remaining OPEN extraction capabilities.
@@ -250,7 +260,7 @@ against source during Mission 1.3 inspection.)
   independent review verdict APPROVE (R-01–R-05 VERIFIED FIXED); recorded per
   the Mission 3.1 assignment instruction. Verification used synthetic data
   exclusively; no private input/artifact contents were read, regenerated, or
-  modified. **Mission 2 itself remains NOT APPROVED** (§D findings preserved).
+  modified. Phase 2 as a whole is now **APPROVED** by explicit human decision.
 - **Mission 3.1 — Job Description Analyzer** is `APPROVED` — the independent
   **DO NOT APPROVE** verdict (M31-01–M31-09) was remediated in Mission 3.1.1;
   the independent Mission 3.1.1 review returned **APPROVE WITH NON-BLOCKING
@@ -581,11 +591,7 @@ unresolved non-default references incorrectly permitting complete preservation.
    The human authorized existing synthetic loopback transport tests; all external
    network/API activity and real candidate reads remain prohibited.
 
-Two-artifact transactional publication, numbering redesign, full field
-evaluation, and section/matcher redesign belong to later missions. Mission 2
-remains NOT APPROVED; Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1
-remain APPROVED. Completion requires IMPLEMENTED — AWAITING REVIEW, never
-automatic approval.
+Manifest-committed two-artifact publication (Mission 2.2.2) and rich-text structural fidelity (Missions 2.2.3–2.2.4) have been completed and verified; full field evaluation, live model verification, and resume generation belong to later missions. Phase 2 as an aggregate deliverable is APPROVED by explicit human decision (2026-11-20); Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1 remain APPROVED.
 
 **Implemented corrections and synthetic evidence:**
 
@@ -656,5 +662,43 @@ the final full-suite totals include the later added cases. Dependency check:
 same no-bytecode/temporary/guard environment with `.venv/bin/python -m pip check`.
 Diff check: `GIT_OPTIONAL_LOCKS=0 git diff --check`.
 
-Stop for independent read-only review. Mission 2 and Mission 2.2.1 remain
-**NOT APPROVED**; previously approved child missions retain their recorded approvals.
+Historical stopping point: stopped for independent read-only review; subsequently audited in the Phase 2 Comprehensive Engineering Review and subsumed under Phase 2 aggregate human approval.
+
+---
+
+## K. Mission 2.2.4 — Scope, implementation details, test results, and stopping point
+
+### Scope completed
+- **N-4:** `hMerge` in `TableCell`, parser default/explicit state resolution (`'continue'` vs `'restart'`), and tests.
+- **N-5 regression gaps:**
+  - Cyclic style inheritance safely diagnosed (`'Numbering style inheritance is cyclic'`).
+  - Unavailable numbering part diagnosis (`'word/numbering.xml could not be read'`).
+  - Fields inside table cell paragraphs captured with instructions.
+  - Legacy paragraph properties and run formatting preserved.
+- **WP-1 (F-14):**
+  - Table statistics recurse through all nested depths (`table_count`, `row_count`, `cell_count`, `table_paragraph_count`, `word_count`, `empty_paragraph_count`, `hyperlink_count`).
+  - Media elements (`w:drawing`, `w:txbxContent`, `w:object`, `a:blip`, `v:imagedata`) counted in body and headers/footers into `drawing_count`, `textbox_count`, `embedded_object_count`, `image_count`.
+  - Empty header/footer paragraphs tracked in `empty_paragraph_count`.
+- **WP-2 (F-22):**
+  - `snapshot.sections` is established as the single source of truth for section assignment and unclassified detection.
+  - `publication_integrity.py` validates that `catalog.section_references` are present in `snapshot.sections` and that `completeness.unclassified_block_indexes` agrees with snapshot sections.
+- **WP-3 (F-23):**
+  - Scope-explicit CLI summary labels: `body_paragraphs`, `table_paragraphs`, `header_paragraphs`, `footer_paragraphs`, `total_paragraphs`.
+  - Regression tests verify all CLI summary labels and counts.
+- **WP-4 (F-24):**
+  - Contact typing for table rows in unclassified sections when any cell or line matches contact info.
+  - Publication pair integrity cleanly validates ragged table rows (fewer physical cells than `column_count`).
+- **WP-6 (F-18):**
+  - Bounded cleanup of unused imports and dead code in `evidence.py`, `extractor.py`, and `publication_integrity.py`.
+- **WP-5:**
+  - Documentation reconciled across `README.md`, `docs/extraction.md`, `docs/matching.md`, and `docs/PROJECT_STATUS.md`.
+
+### Verification outcome
+- Full suite: **897 collected, 889 passed, 1 skipped, 0 failed, 7 deselected, 11 unchanged FutureWarnings** (26.53s).
+- 16 new automated cases added across `test_structural_fidelity.py`, `test_evidence.py`, `test_publication.py`, and `test_cli.py`.
+- Dependency check: `.venv/bin/python -m pip check` -> `No broken requirements found`.
+- Diff check: `git diff --check` -> pass.
+- No real candidate data read or generated; no external network requests.
+- Nothing staged, committed, or pushed.
+
+Independent reviews for Mission 2.2.4 and the Phase 2 Comprehensive Engineering Review both completed with verdicts of APPROVE WITH NON-BLOCKING OBSERVATIONS. Phase 2 as an aggregate deliverable was granted explicit human approval by the project owner (2026-11-20). Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1 remain APPROVED; parent Mission 3 remains in progress. Ready for Phase 3 remaining-scope planning.

@@ -463,3 +463,157 @@ def test_cell_containing_only_a_nested_table_still_emits_nested_evidence(tmp_pat
     assert rows[0].original_content == 'nested Python'
     assert rows[0].source_location == SourceLocation(body_block_index=1, table_index=-1, row_index=0, nested_table_path=[1, 0, 0])
     assert catalog.extraction_completeness.complete is True
+
+
+@pytest.mark.parametrize('value, expected', [(None, 'continue'), ('continue', 'continue'), ('restart', 'restart')])
+def test_horizontal_merge_marker_retains_its_default_or_explicit_state(tmp_path, value, expected):
+    document = _document()
+    table = document.add_table(rows=1, cols=1)
+    cell = table.cell(0, 0)
+    cell.text = 'Python hmerge evidence'
+    marker = OxmlElement('w:hMerge')
+    if value is not None:
+        marker.set(qn('w:val'), value)
+    cell._tc.get_or_add_tcPr().append(marker)
+    _, snapshot, catalog = _extract(document, tmp_path / 'hmerge.docx')
+    result = snapshot.blocks[1].table.rows[0][0]
+    assert result.merged is True
+    assert result.h_merge == expected
+    assert result.text == 'Python hmerge evidence'
+    assert catalog.extraction_completeness.complete is True
+
+
+def test_cyclic_style_inheritance_is_detected_and_diagnosed(tmp_path):
+    from docx.enum.style import WD_STYLE_TYPE
+
+    document = _document()
+    base = document.styles.add_style('Cyclic Base', WD_STYLE_TYPE.PARAGRAPH)
+    derived = document.styles.add_style('Cyclic Derived', WD_STYLE_TYPE.PARAGRAPH)
+    derived.base_style = base
+    base.base_style = derived
+    paragraph = document.add_paragraph('Cyclic evidence')
+    paragraph.style = derived
+    _, snapshot, catalog = _extract(document, tmp_path / 'cyclic.docx')
+    assert 'Numbering style inheritance is cyclic' in snapshot.unresolved_extraction_details
+    assert catalog.extraction_completeness.complete is False
+
+
+def test_unavailable_numbering_part_reports_could_not_be_read_diagnostic(tmp_path):
+    import unittest.mock
+
+    source = builders.build_numbering_fidelity_document(tmp_path / 'unavail.docx')
+    worker = MasterResumeExtractor(source)
+    orig_read = zipfile.ZipFile.read
+    state = {'in_numbering': False}
+
+    def mock_read(archive_self, name, *args, **kwargs):
+        if state['in_numbering'] and (name == 'word/numbering.xml' or name.endswith('/numbering.xml')):
+            raise zipfile.BadZipFile('corrupted numbering part')
+        return orig_read(archive_self, name, *args, **kwargs)
+
+    orig_load = worker._load_numbering_definitions
+
+    def wrapped_load():
+        state['in_numbering'] = True
+        try:
+            return orig_load()
+        finally:
+            state['in_numbering'] = False
+
+    worker._load_numbering_definitions = wrapped_load
+    with unittest.mock.patch.object(zipfile.ZipFile, 'read', mock_read):
+        snapshot = worker.extract()
+    assert 'word/numbering.xml could not be read' in snapshot.unresolved_extraction_details
+    assert evidence.build_evidence_catalog(snapshot).extraction_completeness.complete is False
+
+
+def test_fields_inside_table_cells_are_captured_with_instructions(tmp_path):
+    document = _document()
+    table = document.add_table(rows=1, cols=1)
+    cell = table.cell(0, 0)
+    _simple_field(cell.paragraphs[0], 'FILENAME')
+    _, snapshot, catalog = _extract(document, tmp_path / 'tbl_field.docx')
+    cell_paragraph = snapshot.blocks[1].table.rows[0][0].paragraphs[0]
+    assert cell_paragraph.field == 'FILENAME'
+    assert cell_paragraph.field_instructions == ['FILENAME']
+    assert any('fldSimple' in gap.tag for gap in snapshot.unsupported_content)
+
+
+def test_legacy_paragraph_properties_and_formatting_metadata_are_preserved(tmp_path):
+    document = Document()
+    document.add_heading('1. Technical Profile', level=1)
+    paragraph = document.add_paragraph()
+    paragraph.alignment = 1
+    run1 = paragraph.add_run('Bold Run ')
+    run1.bold = True
+    run2 = paragraph.add_run('Italic Run')
+    run2.italic = True
+    _, snapshot, catalog = _extract(document, tmp_path / 'legacy_para.docx')
+    block = snapshot.blocks[1].paragraph
+    assert block.bold is True
+    assert '1' in str(block.alignment) or 'CENTER' in str(block.alignment)
+    assert len(block.runs) == 2
+    assert block.runs[0].bold is True
+    assert block.runs[1].italic is True
+
+
+def test_deeply_nested_tables_accumulate_all_statistics_recursively(tmp_path):
+    document = _document()
+    root_table = document.add_table(rows=1, cols=1)
+    root_cell = root_table.cell(0, 0)
+    root_cell.paragraphs[0].text = 'Root cell paragraph'
+    builders.append_hyperlink(root_cell.paragraphs[0], 'Link 1', anchor='root_anchor')
+    nested_1 = root_cell.add_table(rows=1, cols=1)
+    nested_1_cell = nested_1.cell(0, 0)
+    nested_1_cell.paragraphs[0].text = 'Nested 1 paragraph'
+    nested_2 = nested_1_cell.add_table(rows=1, cols=1)
+    nested_2_cell = nested_2.cell(0, 0)
+    nested_2_cell.paragraphs[0].text = 'Nested 2 paragraph'
+    nested_2_cell.add_paragraph('')
+    _, snapshot, catalog = _extract(document, tmp_path / 'deep_tables.docx')
+    stats = snapshot.statistics
+    assert stats.table_count == 3
+    assert stats.row_count == 3
+    assert stats.cell_count == 3
+    assert stats.table_paragraph_count == 6
+    assert stats.hyperlink_count == 1
+    assert stats.empty_paragraph_count == 3
+
+
+def test_media_counters_in_body_and_headers_are_accurately_recorded(tmp_path):
+    document = _document()
+    p = document.add_paragraph('Body with media')
+    drawing = OxmlElement('w:drawing')
+    p._p.append(drawing)
+    textbox = OxmlElement('w:txbxContent')
+    p._p.append(textbox)
+    obj = OxmlElement('w:object')
+    p._p.append(obj)
+    blip = etree.Element('{http://schemas.openxmlformats.org/drawingml/2006/main}blip')
+    p._p.append(blip)
+    section = document.sections[0]
+    header = section.header
+    header_p = header.paragraphs[0]
+    header_p.text = 'Header media'
+    header_p._p.append(OxmlElement('w:drawing'))
+    header_p._p.append(etree.Element('{urn:schemas-microsoft-com:vml}imagedata'))
+    _, snapshot, catalog = _extract(document, tmp_path / 'media.docx')
+    stats = snapshot.statistics
+    assert stats.drawing_count == 2
+    assert stats.textbox_count == 1
+    assert stats.embedded_object_count == 1
+    assert stats.image_count == 2
+
+
+def test_empty_header_and_footer_handling(tmp_path):
+    document = _document()
+    section = document.sections[0]
+    header = section.header
+    header.paragraphs[0].text = ''
+    footer = section.footer
+    footer.paragraphs[0].text = '   '
+    _, snapshot, catalog = _extract(document, tmp_path / 'empty_hf.docx')
+    stats = snapshot.statistics
+    assert stats.header_paragraph_count == 1
+    assert stats.footer_paragraph_count == 1
+    assert stats.empty_paragraph_count >= 2

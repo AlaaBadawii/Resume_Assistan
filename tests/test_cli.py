@@ -669,3 +669,58 @@ def test_analyze_job_uses_default_private_output_when_output_flag_is_omitted(
     assert cli_module.main(['analyze-job', '--input', str(source)]) == 0
     assert len(calls) == 1
     assert JobDescriptionAnalysis.model_validate_json(output.read_text()).schema_version == '2.0.0'
+
+
+def test_extract_master_summary_emits_all_scope_labels_and_counters(tmp_path, monkeypatch, capsys):
+    from docx import Document
+
+    monkeypatch.setattr(cli_module, 'PROJECT_ROOT', tmp_path)
+    document = Document()
+    document.add_heading('1. Technical Profile', level=1)
+    document.add_paragraph('Python backend engineer with experience.')
+    table = document.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = 'Skill'
+    table.rows[0].cells[1].text = 'Level'
+    table.rows[1].cells[0].text = 'Python'
+    table.rows[1].cells[1].text = 'Expert'
+    header = document.sections[0].header
+    header.paragraphs[0].text = 'Header Text'
+    footer = document.sections[0].footer
+    footer.paragraphs[0].text = 'Footer Text'
+
+    source = tmp_path / 'summary_test.docx'
+    builders.save(document, source)
+    evidence_path = tmp_path / 'data/private/processed/candidate_evidence.json'
+    snapshot_path = tmp_path / 'data/private/processed/document_snapshot.json'
+
+    exit_code = cli_module.main([
+        'extract-master',
+        '--master', str(source),
+        '--output', str(evidence_path),
+        '--snapshot-output', str(snapshot_path),
+    ])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    stdout = captured.out
+
+    assert 'Master Resume extraction summary' in stdout
+    assert 'body_blocks:' in stdout
+    assert 'body_paragraphs: 2' in stdout
+    assert 'table_paragraphs: 4' in stdout
+    assert 'header_paragraphs: 1' in stdout
+    assert 'footer_paragraphs: 1' in stdout
+    assert 'total_paragraphs: 8' in stdout
+    assert 'tables: 1 rows: 2 cells: 4' in stdout
+    assert 'empty_paragraphs: 0' in stdout
+    assert 'words:' in stdout
+    assert 'hyperlinks:' in stdout
+    assert 'images: 0 drawings: 0 embedded_objects: 0 textboxes: 0' in stdout
+    assert 'detected_sections: 1' in stdout
+    assert 'evidence_records:' in stdout
+    assert 'unclassified_blocks: 0' in stdout
+    assert 'unsupported_content_items:' in stdout
+    assert 'source_preservation_complete: True' in stdout
+    assert 'section_classification_complete: True' in stdout
+    assert 'complete: True' in stdout
+    assert 'evidence_output:' in stdout
+    assert 'snapshot_artifact:' in stdout

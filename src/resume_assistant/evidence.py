@@ -3,15 +3,18 @@
 import hashlib
 from typing import List, Optional
 
-from resume_assistant import models
 from resume_assistant.models import (
+    SCHEMA_VERSION,
     CandidateEvidenceCatalog,
     DocumentSnapshot,
     EvidenceRecord,
     EvidenceType,
     ExtractionCompleteness,
+    HyperlinkBlock,
     SourceDocumentInfo,
     SourceLocation,
+    TableCellSource,
+    TableEvidenceContext,
 )
 from resume_assistant.section_detector import SectionDetector
 
@@ -59,8 +62,17 @@ def _evidence_type_for_text(text: str) -> EvidenceType:
     return EvidenceType.UNCLASSIFIED
 
 
-def _source_location_for_block(block, table_context=None) -> Optional[models.SourceLocation]:
-    location = models.SourceLocation()
+def _is_contact_text(text: str) -> bool:
+    if not text:
+        return False
+    for line in text.splitlines():
+        if _evidence_type_for_text(line) == EvidenceType.CONTACT:
+            return True
+    return False
+
+
+def _source_location_for_block(block) -> SourceLocation:
+    location = SourceLocation()
     location.document_part = 'word/document.xml'
     location.body_block_index = block.index
     paragraph = block.paragraph
@@ -68,12 +80,6 @@ def _source_location_for_block(block, table_context=None) -> Optional[models.Sou
         location.paragraph_index = paragraph.index
         # paragraph_position_in_cell is only meaningful for paragraphs inside table cells.
         location.paragraph_position_in_cell = None
-    if block.table is not None:
-        location.table_index = block.table.index
-        if table_context is not None:
-            location.row_index = table_context.row_index
-            location.cell_index = table_context.cell_index
-            location.nested_table_path = table_context.nested_table_path
     return location
 
 
@@ -87,13 +93,14 @@ def build_evidence_catalog(
     sections=None,
     unresolved_details: Optional[List[str]] = None,
 ) -> CandidateEvidenceCatalog:
-    if sections is None:
-        sections = []
     detector = SectionDetector()
-    detected_sections = list(sections) if sections else detector.detect(snapshot)
-    # Single source of truth: the snapshot always records exactly the sections
-    # used for evidence assignment and unclassified-block detection.
-    snapshot.sections = list(detected_sections)
+    if sections is not None:
+        snapshot.sections = list(sections)
+    elif not snapshot.sections:
+        snapshot.sections = detector.detect(snapshot)
+    # Single source of truth: snapshot.sections is the sole source for
+    # evidence assignment and unclassified-block detection.
+    detected_sections = snapshot.sections
     unclassified = detector.find_unclassified(snapshot)
     records: List[EvidenceRecord] = []
     section_identifiers: List[str] = []
@@ -111,7 +118,7 @@ def build_evidence_catalog(
     def _emit_table_evidence(table_block, owner_block_index: int, ancestors) -> None:
         table_index = table_block.index
         for row_index, row in enumerate(table_block.rows):
-            context = models.TableEvidenceContext(
+            context = TableEvidenceContext(
                 table_index=table_index,
                 row_index=row_index,
                 cell_index=None,
@@ -120,7 +127,7 @@ def build_evidence_catalog(
                 nested_table_path=list(ancestors) if ancestors is not None else None,
                 cell_sources=[],
             )
-            aggregated_hyperlinks: List[models.HyperlinkBlock] = []
+            aggregated_hyperlinks: List[HyperlinkBlock] = []
             for cell_index, cell in enumerate(row):
                 for paragraph_index, paragraph_block in enumerate(cell.paragraphs):
                     link_location = SourceLocation(
@@ -138,7 +145,7 @@ def build_evidence_catalog(
                         )
                 if (cell.text or '').strip():
                     context.cell_sources.append(
-                        models.TableCellSource(
+                        TableCellSource(
                             table_index=table_index,
                             row_index=row_index,
                             cell_index=cell_index,
@@ -164,8 +171,12 @@ def build_evidence_catalog(
                 original_content = '\n'.join(meaningful)
                 evidence_type = _evidence_type_for_section(section_reference)
                 if section_reference is None:
-                    evidence_type = _evidence_type_for_text(original_content)
-                location = models.SourceLocation(
+                    # Contact typing for rows (WP-4 / F-24):
+                    if any(_is_contact_text(cell) for cell in meaningful) or _is_contact_text(original_content):
+                        evidence_type = EvidenceType.CONTACT
+                    else:
+                        evidence_type = _evidence_type_for_text(original_content)
+                location = SourceLocation(
                     document_part='word/document.xml',
                     body_block_index=owner_block_index,
                     table_index=table_index,
@@ -174,7 +185,7 @@ def build_evidence_catalog(
                     nested_table_path=context.nested_table_path,
                 )
                 _append_record(
-                    models.EvidenceRecord(
+                    EvidenceRecord(
                         evidence_id=_row_evidence_id(snapshot.source_sha256, table_index, context.row_index),
                         evidence_type=evidence_type,
                         original_content=original_content,
@@ -286,7 +297,7 @@ def build_evidence_catalog(
         warnings=[f'Unclassified block indexes: {list(unclassified)}'] if unclassified else [],
     )
     return CandidateEvidenceCatalog(
-        schema_version=models.SCHEMA_VERSION,
+        schema_version=SCHEMA_VERSION,
         source_document=SourceDocumentInfo(
             filename=snapshot.source_filename,
             sha256=snapshot.source_sha256,
