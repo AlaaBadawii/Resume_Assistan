@@ -1,54 +1,416 @@
 '''Minimal local CLI for the resume extraction layer.'''
 
 import argparse
+import json
+import os
+import stat
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
+
+from pydantic import BaseModel, ValidationError
+from pydantic_core import PydanticSerializationError
 
 from resume_assistant import evidence as evidence_module
 from resume_assistant import extractor as extractor_module
 from resume_assistant import models
+from resume_assistant import publication_integrity
+from resume_assistant import publication_reader
+from resume_assistant import publication_store
 from resume_assistant import section_detector as section_detector_module
 from resume_assistant.extractor import InvalidMasterResumeError
+from resume_assistant.job_analyzer import JobAnalysisError, JobAnalysisInputError, JobDescriptionAnalyzer
+from resume_assistant.job_models import JobDescriptionAnalysis
+from resume_assistant.llm_client import AgentRouterClient, LLMClientError, LLMConfig, LLMUnexpectedError
+from resume_assistant.matching import CandidateJobMatcher, CandidateJobMatchError, CandidateJobVersionError
+from resume_assistant.matching_models import CandidateJobMatch
+from resume_assistant.models import CandidateEvidenceCatalog, DocumentSnapshot
+from resume_assistant.private_input import PrivateInputError, read_artifact_text
+from resume_assistant.private_output import (
+    PrivateOutput, PrivateOutputError, is_private_output, normalize_output_path,
+)
+from resume_assistant.publication import PublicationManifest, PublicationError
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MASTER_PATH = PROJECT_ROOT / 'data' / 'private' / 'Master_Resume.docx'
-DEFAULT_OUTPUT_PATH = (
-    PROJECT_ROOT / 'data' / 'private' / 'processed' / 'candidate_evidence.json'
-)
+DEFAULT_PROCESSED_DIR = PROJECT_ROOT / 'data' / 'private' / 'processed'
+DEFAULT_EVIDENCE_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'candidate_evidence.json'
+DEFAULT_SNAPSHOT_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'document_snapshot.json'
+DEFAULT_ANALYSIS_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_description_analysis.json'
+DEFAULT_JOB_MATCH_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_candidate_match.json'
 
 
-def run_extract_master(master_path, output_path):
-    master_path = Path(master_path)
-    output_path = Path(output_path)
-    extractor = extractor_module.MasterResumeExtractor(source=master_path)
-    snapshot = extractor.extract()
-    section_detector = section_detector_module.SectionDetector()
-    sections = section_detector.detect(snapshot)
-    unclassified = section_detector.find_unclassified(snapshot)
-    catalog = evidence_module.build_evidence_catalog(snapshot, sections)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(catalog.model_dump_json(indent=2), encoding='utf-8')
-    return catalog, snapshot, sections, unclassified, output_path
+class ExtractionConfigurationError(ValueError):
+    '''Controlled, content-free output configuration error.'''
 
 
-def _print_summary(catalog, snapshot, sections, unclassified, output_path) -> None:
+class ExtractionIntegrityError(ValueError):
+    '''Controlled, content-free source or artifact integrity error.'''
+
+
+class AnalysisIntegrityError(ValueError):
+    '''Controlled, content-free analysis artifact integrity error.'''
+
+
+@dataclass(frozen=True)
+class PublicationCommit:
+    '''Result of a successful coherent publication commit.'''
+
+    manifest_path: Path
+    generation_id: str
+    bundle_key: str
+    snapshot_path: Path
+    catalog_path: Path
+
+
+def _is_private_output(path: Path) -> bool:
+    return is_private_output(PROJECT_ROOT, path)
+
+
+def _paths_alias(left: Path, right: Path) -> bool:
+    if left == right:
+        return True
+    try:
+        return left.samefile(right)
+    except FileNotFoundError:
+        return False
+
+
+def _atomic_write_json(path, payload_json: str, *, destination=None) -> None:
+    if destination is not None:
+        if normalize_output_path(PROJECT_ROOT, path) != destination.path:
+            raise PrivateOutputError('Artifact destination does not match its pinned directory handle.')
+        destination.write_json(payload_json)
+    else:
+        with PrivateOutput(PROJECT_ROOT, path) as target:
+            target.write_json(payload_json)
+
+
+def _validation_data(value):
+    '''Read mutable model fields without invoking any Pydantic serializer.'''
+    if isinstance(value, BaseModel):
+        return {key: _validation_data(item) for key, item in {
+            **value.__dict__, **(value.model_extra or {}),
+        }.items()}
+    if isinstance(value, dict):
+        return {key: _validation_data(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_validation_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_validation_data(item) for item in value)
+    return value
+
+
+def _serialize_extraction_artifact(model, artifact) -> tuple[str, BaseModel]:
+    '''Validate a fresh raw-field projection, then serialize without value warnings.'''
+    validated = model.model_validate(_validation_data(artifact), strict=True)
+    payload = validated.model_dump_json(indent=2, warnings='error')
+    restored = model.model_validate_json(payload)
+    if restored != validated:
+        raise ExtractionIntegrityError('Extraction artifact JSON round-trip validation failed.')
+    return payload, restored
+
+
+def _check_captured_hashes(captured, catalog, snapshot) -> None:
+    if (
+        snapshot.source_sha256 != captured.sha256
+        or catalog.source_document.sha256 != captured.sha256
+        or any(record.source_sha256 != captured.sha256 for record in catalog.evidence_records)
+        or any(part.source_sha256 != captured.sha256 for part in snapshot.header_footer_parts)
+    ):
+        raise ExtractionIntegrityError('Extraction artifact hashes do not match the captured document input.')
+
+
+def run_extract_master(master_path, evidence_output_path, snapshot_output_path=None):
+    master_path = Path(master_path).resolve()
+    evidence_output_path = normalize_output_path(PROJECT_ROOT, evidence_output_path)
+    snapshot_output_path = normalize_output_path(
+        PROJECT_ROOT, snapshot_output_path if snapshot_output_path is not None else DEFAULT_SNAPSHOT_OUTPUT_PATH,
+    )
+    if _paths_alias(evidence_output_path, snapshot_output_path):
+        raise ExtractionConfigurationError('Evidence and snapshot outputs must be distinct files.')
+    if any(_paths_alias(master_path, output) for output in (evidence_output_path, snapshot_output_path)):
+        raise ExtractionConfigurationError('Extraction outputs must not alias the source DOCX.')
+
+    # Pin output directories and check identity before any extraction or
+    # validation work. This rejects symlinked directory components up front.
+    evidence_target = PrivateOutput(PROJECT_ROOT, evidence_output_path)
+    snapshot_target = PrivateOutput(PROJECT_ROOT, snapshot_output_path)
+    evidence_target.__enter__()
+    snapshot_target.__enter__()
+    try:
+        # Capture the source and extract the snapshot using the existing
+        # Mission 2.2.1 immutable byte capture mechanism.
+        extractor = extractor_module.MasterResumeExtractor(source=master_path)
+        snapshot = extractor.extract()
+        captured = extractor.captured_source
+        if captured is None:
+            raise ExtractionIntegrityError('Extraction did not retain a captured document input.')
+
+        # Validate snapshot structure before evidence projection can hide
+        # duplicate or conflicting source structures.
+        publication_integrity.validate_snapshot_structure(snapshot)
+
+        # Section detection and evidence catalog construction.
+        section_detector = section_detector_module.SectionDetector()
+        sections = section_detector.detect(snapshot)
+        unclassified = section_detector.find_unclassified(snapshot)
+        catalog = evidence_module.build_evidence_catalog(snapshot, sections)
+
+        # Validate catalog structure and the complete snapshot/catalog pair.
+        publication_integrity.validate_catalog_structure(catalog)
+        publication_integrity.validate_publication_pair(snapshot, catalog)
+
+        # Strict raw-field revalidation and warning-error serialization for both
+        # artifacts, then captured-source hash checks.
+        catalog_payload, restored_catalog = _serialize_extraction_artifact(CandidateEvidenceCatalog, catalog)
+        snapshot_payload, restored_snapshot = _serialize_extraction_artifact(DocumentSnapshot, snapshot)
+        _check_captured_hashes(captured, restored_catalog, restored_snapshot)
+
+        # Detect directory-chain mutation before replacing either artifact.
+        evidence_target.ensure_current()
+        snapshot_target.ensure_current()
+
+        # Reserve an immutable generation and write both artifact envelopes.
+        bundle_key = publication_store.resolve_bundle_key(PROJECT_ROOT, evidence_output_path)
+        generation_id = uuid.uuid4().hex
+        generation_dir = publication_store.reserve_generation(PROJECT_ROOT, bundle_key, generation_id)
+
+        catalog_entry = publication_store.write_artifact_envelope(
+            generation_dir,
+            kind='catalog',
+            payload_schema_version=models.SCHEMA_VERSION,
+            payload=restored_catalog.model_dump(mode='json'),
+            generation_id=generation_id,
+        )
+        snapshot_entry = publication_store.write_artifact_envelope(
+            generation_dir,
+            kind='snapshot',
+            payload_schema_version=models.SCHEMA_VERSION,
+            payload=restored_snapshot.model_dump(mode='json'),
+            generation_id=generation_id,
+        )
+
+        # Build the publication manifest. The manifest replacement is the only
+        # publication commit point.
+        manifest = PublicationManifest(
+            bundle_key=bundle_key,
+            generation_id=generation_id,
+            evidence_output_selector=str(evidence_output_path),
+            snapshot_output_selector=str(snapshot_output_path),
+            source_filename=captured.filename,
+            source_sha256=captured.sha256,
+            snapshot=snapshot_entry,
+            catalog=catalog_entry,
+        )
+        publication_store.write_manifest(PROJECT_ROOT, evidence_output_path, manifest)
+
+        commit = PublicationCommit(
+            manifest_path=evidence_output_path,
+            generation_id=generation_id,
+            bundle_key=bundle_key,
+            snapshot_path=generation_dir / 'snapshot.json',
+            catalog_path=generation_dir / 'catalog.json',
+        )
+        return catalog, snapshot, sections, unclassified, evidence_output_path, snapshot_output_path, commit
+    finally:
+        evidence_target.__exit__(None, None, None)
+        snapshot_target.__exit__(None, None, None)
+
+
+def run_analyze_job(input_path, output_path=None):
+    try:
+        input_path = Path(input_path).resolve()
+    except (OSError, TypeError, ValueError, RuntimeError):
+        raise JobAnalysisInputError('Job description input path is not readable.') from None
+    output_path = normalize_output_path(
+        PROJECT_ROOT, output_path if output_path is not None else DEFAULT_ANALYSIS_OUTPUT_PATH,
+    )
+    try:
+        if _paths_alias(input_path, output_path):
+            raise ExtractionConfigurationError('Analysis output must not alias the input file.')
+    except OSError:
+        raise JobAnalysisInputError('Job description input/output file identity could not be checked.') from None
+
+    with PrivateOutput(PROJECT_ROOT, output_path) as target:
+        source_text = _read_job_text(input_path)
+        client = AgentRouterClient(LLMConfig.from_env())
+        analyzer = JobDescriptionAnalyzer(client)
+        analysis = analyzer.analyze(source_text)
+
+        payload = analysis.model_dump_json(indent=2)
+        restored = JobDescriptionAnalysis.model_validate_json(payload)
+        if restored.model_dump() != analysis.model_dump():
+            raise AnalysisIntegrityError('Analysis JSON round-trip validation failed.')
+
+        _atomic_write_json(output_path, payload, destination=target)
+    return input_path, output_path, client.model, analysis
+
+
+def _read_job_text(path: Path) -> str:
+    '''Read a regular UTF-8 input; expected filesystem failures are controlled.'''
+    try:
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise JobAnalysisInputError('Job description input must be a regular file.')
+        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+        fd = os.open(path, flags)
+        try:
+            handle = os.fdopen(fd, 'rb')
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise JobAnalysisInputError('Job description input must be a regular file.')
+            return handle.read().decode('utf-8')
+    except FileNotFoundError:
+        raise JobAnalysisInputError('Job description input file could not be found.') from None
+    except UnicodeDecodeError:
+        raise JobAnalysisInputError('Job description input file is not valid UTF-8 text.') from None
+    except OSError:
+        raise JobAnalysisInputError('Job description input file could not be read.') from None
+
+
+def _parse_match_artifact(text, *, label, schema_version):
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('Duplicate JSON key.')
+            result[key] = value
+        return result
+
+    def reject_constant(value):
+        raise ValueError('Nonstandard JSON constant.')
+
+    try:
+        document = json.loads(text, object_pairs_hook=unique_object, parse_constant=reject_constant)
+    except (ValueError, RecursionError):
+        raise PrivateInputError(f'{label} must contain valid, unambiguous JSON.') from None
+    if not isinstance(document, dict) or document.get('schema_version') != schema_version:
+        raise CandidateJobVersionError(f'{label} must use schema {schema_version}.')
+    return document
+
+
+def _load_job_analysis_artifact(path) -> JobDescriptionAnalysis:
+    text = read_artifact_text(path, artifact='job_analysis')
+    document = _parse_match_artifact(text, label='Job analysis artifact', schema_version='2.0.0')
+    return JobDescriptionAnalysis.model_validate_json(json.dumps(document))
+
+
+def _load_candidate_evidence_artifact(path) -> CandidateEvidenceCatalog:
+    text = read_artifact_text(path, artifact='candidate_evidence')
+    document = _parse_match_artifact(text, label='Candidate evidence artifact', schema_version='3.0.0')
+    return CandidateEvidenceCatalog.model_validate_json(json.dumps(document), strict=True)
+
+
+def run_match_job(analysis_path, candidate_evidence_path, output_path=None) -> CandidateJobMatch:
+    output_path = normalize_output_path(
+        PROJECT_ROOT, output_path if output_path is not None else DEFAULT_JOB_MATCH_OUTPUT_PATH,
+    )
+    with PrivateOutput(PROJECT_ROOT, output_path) as target:
+        analysis = _load_job_analysis_artifact(analysis_path)
+        catalog, _snapshot, _manifest = publication_reader.load_candidate_evidence_input(
+            PROJECT_ROOT, candidate_evidence_path
+        )
+        try:
+            if any(_paths_alias(Path(path), output_path) for path in (analysis_path, candidate_evidence_path)):
+                raise ExtractionConfigurationError('Job match output must not alias an input artifact.')
+        except OSError:
+            raise PrivateInputError('Matching input/output artifact identity could not be checked.') from None
+        matcher = CandidateJobMatcher(catalog)
+        match = matcher.assess(analysis)
+        payload = match.model_dump_json(indent=2, warnings='error')
+        restored = CandidateJobMatch.model_validate_json(payload)
+        matcher.validate_result(restored, analysis)
+        if restored != match:
+            raise AnalysisIntegrityError('Job match JSON round-trip validation failed.')
+        _atomic_write_json(output_path, payload, destination=target)
+    return match
+
+
+def _print_match_summary(match: CandidateJobMatch, output_path) -> None:
+    # Aggregate counts, provenance, and limitation indicators only; never
+    # candidate content or complete matching records.
+    counts = {
+        'supported': 0,
+        'partially_supported': 0,
+        'no_evidence_found': 0,
+        'not_assessable': 0,
+    }
+    for requirement in match.requirements:
+        counts[requirement.status] = counts.get(requirement.status, 0) + 1
+    print('Candidate job match summary')
+    print(f'  source_job_schema_version: {match.source_job_schema_version}')
+    print(f'  candidate_evidence_schema_version: {match.candidate_evidence_schema_version}')
+    print(f'  candidate_source_hash_present: {bool(match.candidate_source_sha256)}')
+    print(f'  coverage_status: {match.coverage_status}')
+    for status in ('supported', 'partially_supported', 'no_evidence_found', 'not_assessable'):
+        print(f'  {status}: {counts.get(status, 0)}')
+    print(f'  human_review_required: {str(match.human_review_required).lower()}')
+    print(f'  limitations: {len(match.limitations)}')
+    print(f'  output: {output_path}')
+
+
+def _print_analysis_summary(model, analysis, input_path, output_path) -> None:
+    # Aggregate statistics and presence booleans only — never extracted field
+    # values, source text, or model responses.
+    print('Job description analysis summary')
+    print(f'  source: {input_path.name}')
+    print(f'  model: {model}')
+    print(f'  role_title_present: {analysis.role_title is not None}')
+    print(f'  company_name_present: {analysis.company_name is not None}')
+    print(f'  seniority_level_present: {analysis.seniority_level is not None}')
+    print(f'  employment_type_present: {analysis.employment_type is not None}')
+    print(f'  work_arrangement_present: {analysis.work_arrangement is not None}')
+    print(f'  responsibilities: {len(analysis.responsibilities)}')
+    print(f'  required_skills: {len(analysis.required_skills)}')
+    print(f'  preferred_skills: {len(analysis.preferred_skills)}')
+    print(f'  uncertain_skills: {len(analysis.uncertain_skills)}')
+    print('  interpretations_verified: False')
+    print(f'  education_requirements: {len(analysis.education_requirements)}')
+    print(f'  experience_requirements: {len(analysis.experience_requirements)}')
+    print(f'  languages: {len(analysis.languages)}')
+    print(f'  certifications: {len(analysis.certifications)}')
+    print(f'  ambiguities: {len(analysis.ambiguities)}')
+    print(f'  missing_information: {len(analysis.missing_information)}')
+    print(f'  output: {output_path}')
+
+
+def _print_summary(catalog, snapshot, sections, unclassified, output_path, snapshot_output_path, commit) -> None:
     statistics = snapshot.statistics
     completeness = catalog.extraction_completeness
     print('Master Resume extraction summary')
     print(f'  source: {snapshot.source_filename}')
     print(f'  source_sha256: {snapshot.source_sha256}')
-    print(f'  paragraphs: {statistics.paragraph_count}')
+    print(f'  body_blocks: {statistics.block_count}')
+    print(f'  body_paragraphs: {statistics.body_paragraph_count}')
+    print(f'  table_paragraphs: {statistics.table_paragraph_count}')
+    print(f'  header_paragraphs: {statistics.header_paragraph_count}')
+    print(f'  footer_paragraphs: {statistics.footer_paragraph_count}')
+    print(f'  total_paragraphs: {statistics.total_paragraph_count}')
     print(
         f'  tables: {statistics.table_count} rows: {statistics.row_count} '
         f'cells: {statistics.cell_count}'
     )
+    print(f'  empty_paragraphs: {statistics.empty_paragraph_count}')
+    print(f'  words: {statistics.word_count}')
     print(f'  hyperlinks: {statistics.hyperlink_count}')
+    print(
+        f'  images: {statistics.image_count} drawings: {statistics.drawing_count} '
+        f'embedded_objects: {statistics.embedded_object_count} textboxes: {statistics.textbox_count}'
+    )
     print(f'  detected_sections: {len(sections)}')
     print(f'  evidence_records: {len(catalog.evidence_records)}')
     print(f'  unclassified_blocks: {len(unclassified)}')
     print(f'  unsupported_content_items: {len(snapshot.unsupported_content)}')
+    print(f'  source_preservation_complete: {completeness.source_preservation_complete}')
+    print(f'  section_classification_complete: {completeness.section_classification_complete}')
     print(f'  complete: {completeness.complete}')
-    print(f'  output: {output_path}')
+    print(f'  evidence_output: {output_path}')
+    print(f'  snapshot_artifact: {commit.snapshot_path}')
 
 
 def main(argv=None) -> int:
@@ -68,23 +430,148 @@ def main(argv=None) -> int:
     )
     extract_parser.add_argument(
         '--output',
-        default=str(DEFAULT_OUTPUT_PATH),
+        default=str(DEFAULT_EVIDENCE_OUTPUT_PATH),
         help='Path for the generated candidate_evidence.json artifact.',
+    )
+    extract_parser.add_argument(
+        '--snapshot-output',
+        default=str(DEFAULT_SNAPSHOT_OUTPUT_PATH),
+        help='Logical snapshot selector recorded in the publication manifest; the immutable snapshot is stored in the committed generation.',
+    )
+    analyze_parser = subparsers.add_parser(
+        'analyze-job',
+        help='Analyze a job description into structured, validated JSON.',
+    )
+    analyze_parser.add_argument(
+        '--input',
+        required=True,
+        help='Path to the UTF-8 job description text file.',
+    )
+    analyze_parser.add_argument(
+        '--output',
+        default=str(DEFAULT_ANALYSIS_OUTPUT_PATH),
+        help='Path for the generated job_description_analysis.json artifact.',
+    )
+    match_parser = subparsers.add_parser(
+        'match-job',
+        help='Assess candidate evidence against a validated job description analysis.',
+    )
+    match_parser.add_argument(
+        '--analysis',
+        default=str(DEFAULT_ANALYSIS_OUTPUT_PATH),
+        help='Path to the validated JobDescriptionAnalysis JSON artifact.',
+    )
+    match_parser.add_argument(
+        '--candidate-evidence',
+        default=str(DEFAULT_EVIDENCE_OUTPUT_PATH),
+        help='Path to the validated CandidateEvidenceCatalog JSON artifact.',
+    )
+    match_parser.add_argument(
+        '--output',
+        default=str(DEFAULT_JOB_MATCH_OUTPUT_PATH),
+        help='Path for the generated candidate job match JSON artifact.',
     )
     args = parser.parse_args(argv)
     if args.command == 'extract-master':
         try:
-            catalog, snapshot, sections, unclassified, output_path = run_extract_master(
+            catalog, snapshot, sections, unclassified, output_path, snapshot_output_path, _commit = run_extract_master(
                 master_path=args.master,
-                output_path=args.output,
+                evidence_output_path=Path(args.output),
+                snapshot_output_path=Path(args.snapshot_output),
             )
-        except (FileNotFoundError, InvalidMasterResumeError) as error:
+        except (PrivateOutputError, ExtractionConfigurationError, ExtractionIntegrityError) as error:
             print(f'error: {error}')
             return 2
-        except Exception as error:  # noqa: BLE001
-            print(f'error: extraction failed: {error}')
+        except FileNotFoundError:
+            print('error: a required source or output path could not be found')
+            return 2
+        except InvalidMasterResumeError:
+            print('error: source is not a readable DOCX document')
+            return 2
+        except ValidationError:
+            print('error: artifact validation failed: validation error')
+            return 2
+        except PydanticSerializationError:
+            print('error: artifact serialization failed')
+            return 2
+        except PrivateInputError as error:
+            print(f'error: {error}')
+            return 2
+        except PublicationError as error:
+            print(f'error: {error}')
+            return 2
+        except OSError:
+            print('error: extraction failed: OSError')
             return 3
-        _print_summary(catalog, snapshot, sections, unclassified, output_path)
+        except ValueError:
+            print('error: invalid document data encountered during extraction')
+            return 2
+        except Exception as error:  # noqa: BLE001
+            print(f'error: extraction failed: {type(error).__name__}')
+            return 3
+        _print_summary(catalog, snapshot, sections, unclassified, output_path, snapshot_output_path, _commit)
+        return 0
+    if args.command == 'analyze-job':
+        try:
+            input_path, output_path, model, analysis = run_analyze_job(
+                input_path=args.input,
+                output_path=Path(args.output),
+            )
+        except FileNotFoundError:
+            print('error: a required source or output path could not be found')
+            return 2
+        except UnicodeDecodeError:
+            print('error: input file is not valid UTF-8 text')
+            return 2
+        except (PrivateOutputError, ExtractionConfigurationError, AnalysisIntegrityError) as error:
+            print(f'error: {error}')
+            return 2
+        except LLMUnexpectedError as error:
+            print(f'error: analysis failed: {error.failure_type}')
+            return 3
+        except (JobAnalysisError, LLMClientError) as error:
+            print(f'error: {error}')
+            return 2
+        except ValidationError:
+            print('error: artifact validation failed: validation error')
+            return 2
+        except Exception as error:  # noqa: BLE001
+            print(f'error: analysis failed: {type(error).__name__}')
+            return 3
+        _print_analysis_summary(model, analysis, input_path, output_path)
+        return 0
+    if args.command == 'match-job':
+        try:
+            match = run_match_job(
+                analysis_path=Path(args.analysis),
+                candidate_evidence_path=Path(args.candidate_evidence),
+                output_path=Path(args.output),
+            )
+        except FileNotFoundError:
+            print('error: a required source or output path could not be found')
+            return 2
+        except (PrivateOutputError, ExtractionConfigurationError, AnalysisIntegrityError) as error:
+            print(f'error: {error}')
+            return 2
+        except CandidateJobVersionError as error:
+            print(f'error: {error}')
+            return 2
+        except (CandidateJobMatchError, PrivateInputError, PublicationError) as error:
+            print(f'error: {error}')
+            return 2
+        except ValidationError:
+            print('error: artifact validation failed: validation error')
+            return 2
+        except PydanticSerializationError:
+            print('error: matching artifact serialization failed')
+            return 2
+        except OSError:
+            print('error: job match failed: OSError')
+            return 3
+        except Exception as error:  # noqa: BLE001
+            print(f'error: job match failed: {type(error).__name__}')
+            return 3
+        _print_match_summary(match, Path(args.output))
         return 0
     parser.print_help()
     return 2

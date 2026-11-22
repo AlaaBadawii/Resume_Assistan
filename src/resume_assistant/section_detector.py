@@ -1,9 +1,8 @@
 '''Heuristic, source-faithful section detection for the Master Resume.'''
 
 import re
-from typing import List, Optional
+from typing import List
 
-from resume_assistant import models
 from resume_assistant.models import (
     DocumentSection,
     DocumentSnapshot,
