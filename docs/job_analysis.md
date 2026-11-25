@@ -1,7 +1,9 @@
 # Job Description Analysis — Missions 3.1 / 3.1.1
 
-Mission 3.1 is **BLOCKED** after independent review. Its nine findings have
-been remediated in Mission 3.1.1, **IMPLEMENTED — AWAITING REVIEW**.
+Missions 3.1 and 3.1.1 are **APPROVED** after remediation of the original nine
+review findings and explicit owner approval. Their rejection/remediation history
+is preserved in `PROJECT_STATUS.md`. This analyzer produces the schema-2 input
+for local matching and deterministic section planning; see [planning.md](planning.md).
 
 ## Pipeline and responsibilities
 
@@ -175,7 +177,7 @@ There are no retries, streaming, token accounting, or tool execution.
 
 ## Filesystem security and operating-system limits
 
-`private_output.py` is shared by both CLI commands:
+`private_output.py` is shared by the artifact-publishing CLI commands:
 
 - Normalize paths lexically under the trusted project root; never resolve an
   output through a symlink to choose the trusted private root.
@@ -204,8 +206,10 @@ symlink redirection, not directory renaming itself: a last-instant rename can
 leave a committed file in the originally pinned directory under a different
 pathname. No pathname-visibility lock, protection against a privileged/private-
 directory owner directly changing files, fsync/power-loss durability, or
-two-artifact transaction is claimed. Replacement remains atomic **per file**;
-the first extraction artifact may be committed if a later operation fails.
+general multi-file transaction is claimed. Replacement remains atomic **per
+output file**. Extraction additionally uses immutable generations and a single
+manifest commit point, so readers see one committed snapshot/catalog pair;
+see [extraction.md](extraction.md) for that publication contract.
 
 ## CLI and errors
 
@@ -244,5 +248,7 @@ The seven exclusions and exact remediation invocation are recorded in
 `docs/PROJECT_STATUS.md` §F. `pip check` and `git diff --check` pass. Eleven
 additional in-memory safeguard-removal checks confirmed test sensitivity;
 these are separate from the pytest case counts. Legacy warnings were not
-suppressed. Mission 3.1.1 awaits independent/human review; Mission 3.1 remains
-blocked and no approval is inferred from these results.
+suppressed. Those rows record historical pre-approval verification. Missions
+3.1/3.1.1 were subsequently owner-approved; approval provenance is in
+`PROJECT_STATUS.md`. Managed analysis-to-planning verification is described in
+[planning.md](planning.md).

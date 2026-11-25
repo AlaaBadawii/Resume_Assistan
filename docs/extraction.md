@@ -23,13 +23,20 @@ local DOCX path
     -> strict raw-field revalidation of both mutable models
     -> JSON serialization with warnings='error' + reconstruction
     -> captured-source hash checks on both artifacts and generated provenance
-    -> existing pinned, mode-0600, atomic-per-file private writes
+    -> immutable mode-0600 generation envelopes
+    -> atomic manifest replacement at the --output address
+    -> manifest-aware validated snapshot/catalog handoff to matching/planning
 ```
 
 The extractor never saves the source DOCX. `document_coverage.py` examines an
 already-parsed document; it has no source-file, provider, or network I/O. The
 CLI owns artifact validation and persistence. The matcher remains a separate
 offline consumer of the existing schema-3.0.0 candidate catalog.
+The complete Master Resume → JD analysis → matching → source-validated plan
+workflow is documented in [planning.md](planning.md). The current
+`candidate_evidence.json` path is a publication manifest; `--snapshot-output`
+records compatibility selector metadata rather than writing a standalone
+snapshot file. Consumers must use the committed-pair reader.
 
 ## Captured-byte source binding
 
