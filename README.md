@@ -4,10 +4,9 @@ A local, **Master Resume-driven** Python application that extracts candidate
 evidence, analyzes a supplied job description, matches requirements locally,
 and privately publishes a deterministic, evidence-bound **resume section plan**.
 
-**Current milestone:** Mission 3.3 planning Stages A–D are owner-approved.
-Stage E integrates and documents the complete workflow and awaits independent
-review. The parent mission is not approved merely because its tests pass.
-**Phase 4 job-tailored DOCX/PDF resume generation is not implemented.**
+**Current milestone:** Mission 3.3 planning Stages A–E are owner-approved and
+Mission 3.3 is APPROVED (owner closeout 2026-11-25). **Phase 4 job-tailored
+DOCX/PDF resume generation is not implemented.**
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for approval provenance and
 actual verification results.
 

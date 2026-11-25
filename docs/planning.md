@@ -2,8 +2,8 @@
 
 The planning pipeline consumes the user's existing Master Resume evidence and a
 supplied job description. It publishes a validated **instruction contract for
-Phase 4**, not an actual customized resume. Stages A–D are owner-approved;
-Stage E integration and documentation await review. Approval provenance and
+Phase 4**, not an actual customized resume. Stages A–E are owner-approved and
+Mission 3.3 is APPROVED (owner closeout 2026-11-25). Approval provenance and
 exact verification results live in [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Artifact relationships and commands
