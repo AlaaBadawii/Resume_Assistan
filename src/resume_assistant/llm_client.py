@@ -1,4 +1,4 @@
-'''Minimal OpenAI-compatible Responses API client for AgentRouter.
+'''Minimal stdlib HTTP client for Responses, Chat Completions, and Gemini APIs.
 
 This module is intentionally isolated from job-description business logic:
 it only knows how to build an HTTP request for the configured provider and
@@ -15,19 +15,44 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Mapping, Optional, Tuple
+from typing import Callable, Dict, Literal, Mapping, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
+
+ProviderName = Literal['responses', 'chat_completions', 'gemini']
+
+VALID_PROVIDERS: Tuple[ProviderName, ...] = (
+    'responses',
+    'chat_completions',
+    'gemini',
+)
+DEFAULT_PROVIDER: ProviderName = 'responses'
 
 DEFAULT_BASE_URL = 'https://agentrouter.org/v1'
 DEFAULT_MODEL = 'gpt-6.1-sol'
+DEFAULT_CHAT_COMPLETIONS_BASE_URL = 'https://api.openai.com/v1'
+DEFAULT_CHAT_COMPLETIONS_MODEL = 'gpt-4o-mini'
+DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
+DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
 DEFAULT_TIMEOUT_SECONDS = 60.0
 
+PROVIDER_ENV_VAR = 'LLM_PROVIDER'
 API_KEY_ENV_VAR = 'AGENTROUTER_API_KEY'
 BASE_URL_ENV_VAR = 'AGENTROUTER_BASE_URL'
 MODEL_ENV_VAR = 'AGENTROUTER_MODEL'
 TIMEOUT_ENV_VAR = 'AGENTROUTER_TIMEOUT_SECONDS'
 
+LLM_API_KEY_ENV_VAR = 'LLM_API_KEY'
+OPENAI_API_KEY_ENV_VAR = 'OPENAI_API_KEY'
+LLM_BASE_URL_ENV_VAR = 'LLM_BASE_URL'
+LLM_MODEL_ENV_VAR = 'LLM_MODEL'
+LLM_TIMEOUT_ENV_VAR = 'LLM_TIMEOUT_SECONDS'
+GEMINI_API_KEY_ENV_VAR = 'GEMINI_API_KEY'
+GEMINI_BASE_URL_ENV_VAR = 'GEMINI_BASE_URL'
+GEMINI_MODEL_ENV_VAR = 'GEMINI_MODEL'
+COMMON_MODEL_ENV_VAR = 'MODEL'
+
 USER_AGENT = 'resume-assistant/0.1'
+_GEMINI_MODEL_PATTERN = re.compile(r'^[A-Za-z0-9._-]+$')
 
 
 class LLMClientError(Exception):
@@ -107,6 +132,7 @@ def _normalize_base_url(value: str) -> str:
             not path.startswith('/')
             or any(component in ('', '.', '..') or not re.fullmatch(r'[A-Za-z0-9._~-]+', component) for component in components)
             or components[-1] == 'responses'
+            or components[-2:] == ['chat', 'completions']
         ):
             raise LLMConfigurationError('AgentRouter base URL must contain a valid API base path, not an endpoint.')
     authority = f'[{normalized_host}]' if address is not None and address.version == 6 else normalized_host
@@ -115,26 +141,77 @@ def _normalize_base_url(value: str) -> str:
     return urlunsplit((parts.scheme, authority, path, '', ''))
 
 
+def _default_base_url_for(provider: ProviderName) -> str:
+    return {
+        'responses': DEFAULT_BASE_URL,
+        'chat_completions': DEFAULT_CHAT_COMPLETIONS_BASE_URL,
+        'gemini': DEFAULT_GEMINI_BASE_URL,
+    }[provider]
+
+
+def _default_model_for(provider: ProviderName) -> str:
+    return {
+        'responses': DEFAULT_MODEL,
+        'chat_completions': DEFAULT_CHAT_COMPLETIONS_MODEL,
+        'gemini': DEFAULT_GEMINI_MODEL,
+    }[provider]
+
+
+def _missing_key_error_for(provider: ProviderName) -> str:
+    env_name = {
+        'responses': API_KEY_ENV_VAR,
+        'chat_completions': LLM_API_KEY_ENV_VAR,
+        'gemini': GEMINI_API_KEY_ENV_VAR,
+    }[provider]
+    return f'{env_name} is not configured.'
+
+
+def _first_present(env: Mapping[str, str], *names: str, default: str = '') -> str:
+    for name in names:
+        if name in env:
+            return env[name]
+    return default
+
+
 @dataclass(frozen=True)
 class LLMConfig:
-    '''Runtime settings for the AgentRouter Responses API.'''
+    '''Runtime settings for Responses, Chat Completions, and Gemini APIs.'''
 
     api_key: str = field(repr=False)
-    base_url: str = DEFAULT_BASE_URL
-    model: str = DEFAULT_MODEL
+    base_url: Optional[str] = None
+    model: Optional[str] = None
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    provider: ProviderName = DEFAULT_PROVIDER
 
     def __post_init__(self) -> None:
+        if not isinstance(self.provider, str) or not self.provider.strip():
+            raise LLMConfigurationError(
+                'LLM provider must be one of: responses, chat_completions, gemini.'
+            )
+        provider = self.provider.strip().lower()
+        if provider not in VALID_PROVIDERS:
+            raise LLMConfigurationError(
+                'LLM provider must be one of: responses, chat_completions, gemini.'
+            )
         if not isinstance(self.api_key, str) or not self.api_key.strip():
-            raise LLMConfigurationError(f'{API_KEY_ENV_VAR} is not configured.')
+            raise LLMConfigurationError(_missing_key_error_for(provider))
         key = self.api_key.strip()
         if not key.isascii() or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in key):
             raise LLMConfigurationError('AgentRouter API key has invalid characters.')
-        if not isinstance(self.model, str) or not self.model.strip():
+
+        raw_model = _default_model_for(provider) if self.model is None else self.model
+        if not isinstance(raw_model, str) or not raw_model.strip():
             raise LLMConfigurationError('AgentRouter model must not be empty.')
-        model = self.model.strip()
+        model = raw_model.strip()
         if not model.isascii() or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in model):
             raise LLMConfigurationError('AgentRouter model has invalid characters.')
+        if provider == 'gemini' and (
+            model in ('.', '..') or not _GEMINI_MODEL_PATTERN.fullmatch(model)
+        ):
+            raise LLMConfigurationError('Gemini model name contains invalid characters.')
+
+        raw_base_url = _default_base_url_for(provider) if self.base_url is None else self.base_url
+
         if type(self.timeout_seconds) not in (int, float):
             raise LLMConfigurationError('AgentRouter timeout must be a finite positive number.')
         try:
@@ -143,27 +220,83 @@ class LLMConfig:
             raise LLMConfigurationError('AgentRouter timeout must be a finite positive number.') from None
         if not math.isfinite(timeout) or timeout <= 0:
             raise LLMConfigurationError('AgentRouter timeout must be a finite positive number.')
+
+        object.__setattr__(self, 'provider', provider)
         object.__setattr__(self, 'api_key', key)
         object.__setattr__(self, 'model', model)
-        object.__setattr__(self, 'base_url', _normalize_base_url(self.base_url))
+        object.__setattr__(self, 'base_url', _normalize_base_url(raw_base_url))
         object.__setattr__(self, 'timeout_seconds', timeout)
 
     @property
     def endpoint(self) -> str:
+        if self.provider == 'chat_completions':
+            return f'{self.base_url}/chat/completions'
+        if self.provider == 'gemini':
+            return f'{self.base_url}/models/{self.model}:generateContent'
         return f'{self.base_url}/responses'
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> 'LLMConfig':
         env = os.environ if environ is None else environ
+        raw_provider = env.get(PROVIDER_ENV_VAR)
+        if raw_provider is None:
+            provider: ProviderName = DEFAULT_PROVIDER
+        elif not isinstance(raw_provider, str) or not raw_provider.strip():
+            raise LLMConfigurationError(
+                'LLM provider must be one of: responses, chat_completions, gemini.'
+            )
+        else:
+            normalized_provider = raw_provider.strip().lower()
+            if normalized_provider not in VALID_PROVIDERS:
+                raise LLMConfigurationError(
+                    'LLM provider must be one of: responses, chat_completions, gemini.'
+                )
+            provider = normalized_provider  # type: ignore[assignment]
+
+        if provider == 'responses':
+            api_key = env.get(API_KEY_ENV_VAR, '')
+            base_url = env.get(BASE_URL_ENV_VAR, DEFAULT_BASE_URL)
+            model = _first_present(env, MODEL_ENV_VAR, COMMON_MODEL_ENV_VAR, default=DEFAULT_MODEL)
+            raw_timeout = env.get(TIMEOUT_ENV_VAR, DEFAULT_TIMEOUT_SECONDS)
+        elif provider == 'chat_completions':
+            api_key = _first_present(
+                env, LLM_API_KEY_ENV_VAR, OPENAI_API_KEY_ENV_VAR, API_KEY_ENV_VAR, default='',
+            )
+            base_url = _first_present(
+                env, LLM_BASE_URL_ENV_VAR, BASE_URL_ENV_VAR,
+                default=DEFAULT_CHAT_COMPLETIONS_BASE_URL,
+            )
+            model = _first_present(
+                env, LLM_MODEL_ENV_VAR, COMMON_MODEL_ENV_VAR,
+                default=DEFAULT_CHAT_COMPLETIONS_MODEL,
+            )
+            raw_timeout = _first_present(
+                env, LLM_TIMEOUT_ENV_VAR, TIMEOUT_ENV_VAR,
+                default=str(DEFAULT_TIMEOUT_SECONDS),
+            )
+        else:
+            api_key = _first_present(env, GEMINI_API_KEY_ENV_VAR, LLM_API_KEY_ENV_VAR, default='')
+            base_url = _first_present(env, GEMINI_BASE_URL_ENV_VAR, default=DEFAULT_GEMINI_BASE_URL)
+            model = _first_present(
+                env, GEMINI_MODEL_ENV_VAR, LLM_MODEL_ENV_VAR, COMMON_MODEL_ENV_VAR,
+                default=DEFAULT_GEMINI_MODEL,
+            )
+            raw_timeout = _first_present(
+                env, LLM_TIMEOUT_ENV_VAR, TIMEOUT_ENV_VAR,
+                default=str(DEFAULT_TIMEOUT_SECONDS),
+            )
+
         try:
-            timeout_seconds = float(env.get(TIMEOUT_ENV_VAR, DEFAULT_TIMEOUT_SECONDS))
+            timeout_seconds = float(raw_timeout)
         except (ValueError, TypeError, OverflowError):
             raise LLMConfigurationError('AgentRouter timeout must be a finite positive number.') from None
+
         return cls(
-            api_key=env.get(API_KEY_ENV_VAR, ''),
-            base_url=env.get(BASE_URL_ENV_VAR, DEFAULT_BASE_URL),
-            model=env.get(MODEL_ENV_VAR, DEFAULT_MODEL),
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
             timeout_seconds=timeout_seconds,
+            provider=provider,
         )
 
 
@@ -200,7 +333,7 @@ def _reject_json_constant(value):
 
 
 class AgentRouterClient:
-    '''Calls the configured AgentRouter OpenAI-compatible Responses API.'''
+    '''Calls the configured Responses, Chat Completions, or Gemini HTTP API.'''
 
     def __init__(self, config: LLMConfig, http_post: Optional[HttpPost] = None) -> None:
         self._config = config
@@ -210,6 +343,38 @@ class AgentRouterClient:
     def model(self) -> str:
         return self._config.model
 
+    def _build_request(self, *, instructions: str, input_text: str) -> Tuple[str, Dict[str, str], Dict]:
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'User-Agent': USER_AGENT,
+        }
+        if self._config.provider == 'chat_completions':
+            headers['Authorization'] = f'Bearer {self._config.api_key}'
+            payload: Dict = {
+                'model': self._config.model,
+                'messages': [
+                    {'role': 'system', 'content': instructions},
+                    {'role': 'user', 'content': input_text},
+                ],
+                'stream': False,
+            }
+        elif self._config.provider == 'gemini':
+            headers['x-goog-api-key'] = self._config.api_key
+            payload = {
+                'system_instruction': {'parts': [{'text': instructions}]},
+                'contents': [{'role': 'user', 'parts': [{'text': input_text}]}],
+            }
+        else:
+            headers['Authorization'] = f'Bearer {self._config.api_key}'
+            payload = {
+                'model': self._config.model,
+                'instructions': instructions,
+                'input': input_text,
+                'stream': False,
+            }
+        return self._config.endpoint, headers, payload
+
     def generate(self, *, instructions: str, input_text: str) -> str:
         '''Send instructions plus input text; return the model output text.
 
@@ -217,19 +382,9 @@ class AgentRouterClient:
         request payload. Tuning parameters are omitted; their live-provider
         compatibility has not been verified.
         '''
-        payload = {
-            'model': self._config.model,
-            'instructions': instructions,
-            'input': input_text,
-            'stream': False,
-        }
-        headers = {
-            'Authorization': f'Bearer {self._config.api_key}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'User-Agent': USER_AGENT,
-        }
-        url = self._config.endpoint
+        url, headers, payload = self._build_request(
+            instructions=instructions, input_text=input_text
+        )
         try:
             status, body = self._http_post(url, headers, payload, self._config.timeout_seconds)
         except LLMClientError:
@@ -261,6 +416,14 @@ class AgentRouterClient:
             raise LLMResponseFormatError('provider returned a malformed JSON response.') from None
         if not isinstance(document, dict):
             raise LLMResponseFormatError('provider returned an unexpected response shape.')
+
+        if self._config.provider == 'chat_completions':
+            return self._parse_chat_completions_document(document)
+        if self._config.provider == 'gemini':
+            return self._parse_gemini_document(document)
+        return self._parse_responses_document(document)
+
+    def _parse_responses_document(self, document: Dict) -> str:
         if not {'status', 'error', 'incomplete_details', 'output'} <= document.keys():
             raise LLMResponseFormatError('provider response is missing required envelope fields.')
         if document.get('error') is not None:
@@ -273,6 +436,80 @@ class AgentRouterClient:
             raise LLMProviderError('provider response was not fully completed.')
         text = self._extract_output_text(document)
         if not text:
+            raise LLMResponseFormatError('provider response contained no output text.')
+        return text
+
+    @staticmethod
+    def _parse_chat_completions_document(document: Dict) -> str:
+        if document.get('error') is not None:
+            raise LLMProviderError('provider reported an error for the request.')
+        choices = document.get('choices')
+        if not isinstance(choices, list) or not choices:
+            raise LLMResponseFormatError('provider returned an unexpected choices structure.')
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise LLMResponseFormatError('provider returned an unexpected choice structure.')
+        message = choice.get('message')
+        if not isinstance(message, dict):
+            raise LLMResponseFormatError('provider returned an unexpected message structure.')
+        if message.get('refusal') is not None:
+            raise LLMProviderError('provider refused the request.')
+        finish_reason = choice.get('finish_reason')
+        if not isinstance(finish_reason, str):
+            raise LLMResponseFormatError('provider response has no valid finish reason.')
+        if finish_reason == 'content_filter':
+            raise LLMProviderError('provider refused the request.')
+        if finish_reason != 'stop':
+            raise LLMProviderError('provider response was not fully completed.')
+        if 'role' in message and message.get('role') != 'assistant':
+            raise LLMResponseFormatError('provider returned an unexpected message role.')
+        content = message.get('content')
+        if not isinstance(content, str) or not content.strip():
+            raise LLMResponseFormatError('provider response contained no output text.')
+        return content
+
+    @staticmethod
+    def _parse_gemini_document(document: Dict) -> str:
+        if document.get('error') is not None:
+            raise LLMProviderError('provider reported an error for the request.')
+        prompt_feedback = document.get('promptFeedback')
+        if prompt_feedback is not None:
+            if not isinstance(prompt_feedback, dict):
+                raise LLMResponseFormatError('provider returned an unexpected prompt feedback structure.')
+            if prompt_feedback.get('blockReason') is not None:
+                raise LLMProviderError('provider blocked the request.')
+        candidates = document.get('candidates')
+        if not isinstance(candidates, list) or not candidates:
+            raise LLMResponseFormatError('provider returned an unexpected candidates structure.')
+        candidate = candidates[0]
+        if not isinstance(candidate, dict):
+            raise LLMResponseFormatError('provider returned an unexpected candidate structure.')
+        finish_reason = candidate.get('finishReason')
+        if not isinstance(finish_reason, str):
+            raise LLMResponseFormatError('provider response has no valid finish reason.')
+        if finish_reason != 'STOP':
+            raise LLMProviderError('provider response was not fully completed.')
+        content = candidate.get('content')
+        if not isinstance(content, dict):
+            raise LLMResponseFormatError('provider returned an unexpected content structure.')
+        parts = content.get('parts')
+        if not isinstance(parts, list) or not parts:
+            raise LLMResponseFormatError('provider returned an unexpected content parts structure.')
+        fragments = []
+        for part in parts:
+            if not isinstance(part, dict):
+                raise LLMResponseFormatError('provider returned an unexpected content part structure.')
+            if part.get('thought') is True:
+                thought_text = part.get('text')
+                if thought_text is not None and not isinstance(thought_text, str):
+                    raise LLMResponseFormatError('provider returned an unexpected thought part structure.')
+                continue
+            value = part.get('text')
+            if not isinstance(value, str) or not value.strip():
+                raise LLMResponseFormatError('provider returned an invalid output text fragment.')
+            fragments.append(value)
+        text = ''.join(fragments)
+        if not text.strip():
             raise LLMResponseFormatError('provider response contained no output text.')
         return text
 
@@ -331,3 +568,6 @@ class AgentRouterClient:
                     raise LLMResponseFormatError('provider returned an invalid output text fragment.')
                 fragments.append(value)
         return ''.join(fragments)
+
+
+LLMClient = AgentRouterClient

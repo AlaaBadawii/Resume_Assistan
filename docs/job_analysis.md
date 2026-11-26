@@ -139,12 +139,21 @@ No `.env` loader or new dependency is bundled; configuration comes from the
 process environment. Both direct `LLMConfig` construction and `from_env()`
 enforce the same invariants. Credential values are excluded from config reprs.
 
-| Variable | Required | Default |
-|---|---|---|
-| `AGENTROUTER_API_KEY` | yes | — |
-| `AGENTROUTER_BASE_URL` | no | `https://agentrouter.org/v1` |
-| `AGENTROUTER_MODEL` | no | `gpt-6.1-sol` |
-| `AGENTROUTER_TIMEOUT_SECONDS` | no | `60` |
+| Variable | Provider(s) | Required | Default |
+|---|---|---|---|
+| `LLM_PROVIDER` | all | no | `responses` (`responses`, `chat_completions`, `gemini`) |
+| `AGENTROUTER_API_KEY` | `responses` (fallback for `chat_completions`) | yes (`responses`) | — |
+| `AGENTROUTER_BASE_URL` | `responses` (fallback for `chat_completions`) | no | `https://agentrouter.org/v1` |
+| `AGENTROUTER_MODEL` | `responses` | no | `MODEL` fallback, else `gpt-6.1-sol` |
+| `AGENTROUTER_TIMEOUT_SECONDS` | `responses` (fallback for others) | no | `60` |
+| `LLM_API_KEY` | `chat_completions`, `gemini` fallback | yes (`chat_completions` unless `OPENAI_API_KEY`/`AGENTROUTER_API_KEY` set) | — |
+| `OPENAI_API_KEY` | `chat_completions` fallback | no | — |
+| `LLM_BASE_URL` | `chat_completions` | no | `AGENTROUTER_BASE_URL` fallback, else `https://api.openai.com/v1` |
+| `LLM_MODEL` | `chat_completions`, `gemini` fallback | no | `MODEL` fallback, else `gpt-4o-mini` (`chat_completions`) |
+| `LLM_TIMEOUT_SECONDS` | `chat_completions`, `gemini` | no | `AGENTROUTER_TIMEOUT_SECONDS` fallback, else `60` |
+| `GEMINI_API_KEY` | `gemini` | yes (`gemini` unless `LLM_API_KEY` set) | — |
+| `GEMINI_BASE_URL` | `gemini` | no | `https://generativelanguage.googleapis.com/v1beta` |
+| `GEMINI_MODEL` | `gemini` | no | `LLM_MODEL` / `MODEL` fallback, else `gemini-2.5-flash` |
 
 - HTTPS is required except for **numeric loopback HTTP** endpoints used by
   local development/integration tests. HTTP hostname endpoints, including

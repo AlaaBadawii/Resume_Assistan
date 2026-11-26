@@ -191,7 +191,18 @@ def _is_contact_profile_value(value: str) -> bool:
     return bool(_PHONE_PATTERN.fullmatch(normalized) and _phone_spans(normalized))
 
 
+def _mailto_address(url: str) -> Optional[str]:
+    stripped = (url or '').strip()
+    if not stripped.casefold().startswith('mailto:'):
+        return None
+    target = stripped[7:].split('?', 1)[0].strip()
+    return target or None
+
+
 def _normalized_url(url: str) -> str:
+    mailto = _mailto_address(url)
+    if mailto is not None:
+        return mailto.casefold()
     value = (url or '').strip().casefold()
     value = re.sub(r'^[a-z][a-z0-9+.-]*://', '', value)
     if value.startswith('www.'):
@@ -204,6 +215,7 @@ def _url_visible_in_text(url: str, text: str) -> bool:
     if not normalized_url:
         return False
     normalized_text = (text or '').casefold()
+    normalized_text = re.sub(r'mailto:', '', normalized_text)
     normalized_text = re.sub(r'[a-z][a-z0-9+.-]*://', '', normalized_text)
     normalized_text = normalized_text.replace('www.', '')
     return normalized_url in normalized_text
@@ -389,17 +401,43 @@ def _source_order(record: EvidenceRecord) -> tuple[int, int]:
     return block_index, paragraph_index
 
 
-def _starts_with_contact_label(line: str) -> bool:
+def _strip_contact_label(segment: str) -> Optional[str]:
+    text = (segment or '').strip()
+    if not text:
+        return None
     for separator in (':', '|', '–', '—', '-'):
-        left, found, right = line.partition(separator)
+        left, found, right = text.partition(separator)
         if found and _is_contact_label(left.strip(), bare=False) and right.strip():
-            return True
+            return right.strip()
     for prefix in _CONTACT_PREFIXES_BY_LENGTH:
-        if line.casefold().startswith(prefix + ' '):
-            remainder = line[len(prefix) + 1:].strip()
+        if text.casefold().startswith(prefix + ' '):
+            remainder = text[len(prefix) + 1:].strip()
             if _is_contact_profile_value(remainder):
-                return True
-    return False
+                return remainder
+    return None
+
+
+def _starts_with_contact_label(line: str) -> bool:
+    return _strip_contact_label(line) is not None
+
+
+def _contact_fragment_key(fragment: str) -> str:
+    stripped = (fragment or '').strip()
+    if _EMAIL_PATTERN.fullmatch(stripped):
+        return stripped.casefold()
+    if stripped.casefold().startswith(('http://', 'https://', 'www.', 'mailto:')) or _URL_PATTERN.fullmatch(stripped):
+        return _normalized_url(stripped)
+    return ' '.join(stripped.casefold().split())
+
+
+def _is_contact_label_text(text: str) -> bool:
+    lowered = (text or '').strip().casefold()
+    return (
+        not lowered
+        or lowered in {'link', 'here', 'url', 'profile'}
+        or lowered in _PROFILE_LABELS
+        or _is_contact_label(lowered, bare=False)
+    )
 
 
 def _contact_fragments(
@@ -410,36 +448,60 @@ def _contact_fragments(
     line = (line or '').strip()
     visible = line if visible_text is None else visible_text
     fragments: list[str] = []
+    seen_keys: set[str] = set()
+
+    def add_fragment(value: str) -> None:
+        cleaned = (value or '').strip()
+        if not cleaned:
+            return
+        key = _contact_fragment_key(cleaned)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            fragments.append(cleaned)
+
     links = list(hyperlinks)
     if line:
-        if _starts_with_contact_label(line):
-            fragments.append(line)
+        segments = [seg.strip() for seg in re.split(r'[|•·]', line) if seg.strip()]
+        if len(segments) > 1 and any(':' in seg or _pii_spans(seg) for seg in segments):
+            target_segments = segments
         else:
-            spans = _pii_spans(line)
-            if spans:
-                fragments.extend(line[start:end].strip() for start, end, _ in spans)
-            elif not links:
-                for part in re.split(r'[|•·–—]| {2,}', line):
-                    part = part.strip(' ,;')
-                    if (
-                        part
-                        and part.casefold() in _PROFILE_LABELS
-                        and _is_contact_label(part, bare=False)
-                        and _is_contact_profile_value(part)
-                    ):
-                        fragments.append(part)
+            target_segments = [line]
+        for segment in target_segments:
+            stripped_value = _strip_contact_label(segment)
+            if stripped_value is not None:
+                add_fragment(stripped_value)
+            else:
+                spans = _pii_spans(segment)
+                if spans:
+                    for start, end, _ in spans:
+                        add_fragment(segment[start:end])
+                elif not links:
+                    for part in re.split(r'[|•·–—]| {2,}', segment):
+                        part = part.strip(' ,;')
+                        if (
+                            part
+                            and part.casefold() in _PROFILE_LABELS
+                            and _is_contact_label(part, bare=False)
+                            and _is_contact_profile_value(part)
+                        ):
+                            add_fragment(part)
     for link in links:
         url = (getattr(link, 'url', None) or '').strip()
         if not url:
             continue
+        mailto = _mailto_address(url)
+        if mailto is not None:
+            if not _url_visible_in_text(url, visible) and _EMAIL_PATTERN.fullmatch(mailto):
+                add_fragment(mailto)
+            continue
         if _url_visible_in_text(url, visible):
             continue
         text = (getattr(link, 'text', None) or '').strip()
-        if text and text.casefold() not in {'link', 'here', 'url', 'profile'}:
-            fragments.append(f'{text}: {url}')
+        if _is_contact_label_text(text) or _url_visible_in_text(url, text):
+            add_fragment(url)
         else:
-            fragments.append(url)
-    return list(dict.fromkeys(fragment for fragment in fragments if fragment))
+            add_fragment(f'{text}: {url}')
+    return fragments
 
 
 def _is_contact_only_text(text: str) -> bool:
@@ -533,17 +595,10 @@ def _build_header(
     catalog: CandidateEvidenceCatalog,
     snapshot: Optional[DocumentSnapshot] = None,
 ) -> DeterministicHeader:
-    name_records = sorted(
+    header_records = sorted(
         (
             record for record in catalog.evidence_records
             if _header_relevant_record(record)
-        ),
-        key=_source_order,
-    )
-    contact_records = sorted(
-        (
-            record for record in catalog.evidence_records
-            if _header_relevant_record(record) or record.hyperlinks
         ),
         key=_source_order,
     )
@@ -566,7 +621,7 @@ def _build_header(
             source_ids.append(record.evidence_id)
         return True
 
-    for record in name_records:
+    for record in header_records:
         allow_mononym = (
             record.section_reference in (None, 'professional-identity')
             or record.evidence_type in (EvidenceType.CONTACT, EvidenceType.IDENTITY)
@@ -592,14 +647,23 @@ def _build_header(
                 break
 
     contact_lines: list[str] = []
-    for record in contact_records:
+    seen_contact_keys: set[str] = set()
+
+    def add_contact_line(fragment: str) -> bool:
+        key = _contact_fragment_key(fragment)
+        if key in seen_contact_keys:
+            return False
+        seen_contact_keys.add(key)
+        contact_lines.append(fragment)
+        return True
+
+    for record in header_records:
         added = False
         for line in record.original_content.splitlines() or ['']:
             for fragment in _contact_fragments(
                 line, record.hyperlinks, record.original_content
             ):
-                if fragment not in contact_lines:
-                    contact_lines.append(fragment)
+                if add_contact_line(fragment):
                     added = True
         if added:
             source_ids.append(record.evidence_id)
@@ -610,14 +674,24 @@ def _build_header(
                 for fragment in _contact_fragments(
                     line, paragraph.hyperlinks, paragraph.text
                 ):
-                    if fragment not in contact_lines:
-                        contact_lines.append(fragment)
+                    add_contact_line(fragment)
 
     return DeterministicHeader(
         full_name=full_name,
         contact_lines=contact_lines,
         source_evidence_ids=list(dict.fromkeys(source_ids)),
     )
+
+
+def _is_technical_skill_catalog_record(record: EvidenceRecord) -> bool:
+    if record.evidence_type != EvidenceType.TECHNICAL_SKILL:
+        return False
+    if _record_is_pii_only(record):
+        return False
+    style = (record.formatting or {}).get('style')
+    if isinstance(style, str) and style.casefold().startswith('heading'):
+        return False
+    return bool(_scrub_pii(record.original_content).strip())
 
 
 def _build_llm_input(
@@ -635,6 +709,14 @@ def _build_llm_input(
                 'Selected evidence cannot include identity or contact records.'
             )
 
+    technical_skill_ids = [
+        record.evidence_id
+        for record in records.values()
+        if _is_technical_skill_catalog_record(record)
+    ]
+    technical_skill_set = set(technical_skill_ids)
+    available_ids = selected | technical_skill_set
+
     safe_content: dict[str, str] = {}
 
     def content(identifier: str) -> str:
@@ -645,19 +727,25 @@ def _build_llm_input(
             )
         return safe_content[identifier]
 
-    def safe_ids(identifiers: Iterable[str]) -> list[str]:
+    def safe_ids(
+        identifiers: Iterable[str], pool: Optional[set[str]] = None
+    ) -> list[str]:
+        allowed = selected if pool is None else pool
         return [
             identifier
             for identifier in identifiers
-            if identifier in selected and content(identifier).strip()
+            if identifier in allowed and content(identifier).strip()
         ]
 
+    ordered_alias_source_ids = list(
+        dict.fromkeys([*plan.selected_evidence_ids, *technical_skill_ids])
+    )
     evidence_alias_by_id = {
         identifier: f'E{index}'
         for index, identifier in enumerate(
             (
-                identifier for identifier in plan.selected_evidence_ids
-                if identifier in selected and content(identifier).strip()
+                identifier for identifier in ordered_alias_source_ids
+                if identifier in available_ids and content(identifier).strip()
             ),
             start=1,
         )
@@ -681,10 +769,12 @@ def _build_llm_input(
     def entry_alias(identifier: str) -> str:
         return entry_alias_by_id.get(identifier, identifier)
 
-    def evidence(identifiers: Iterable[str]) -> list[dict[str, str]]:
+    def evidence(
+        identifiers: Iterable[str], pool: Optional[set[str]] = None
+    ) -> list[dict[str, str]]:
         return [
             {'evidence_id': alias(identifier), 'original_content': content(identifier)}
-            for identifier in safe_ids(identifiers)
+            for identifier in safe_ids(identifiers, pool=pool)
         ]
 
     ordered_sections = []
@@ -808,10 +898,15 @@ def _build_llm_input(
         'project_highlights': project_highlights,
     }
 
+    technical_skills_evidence = evidence(
+        technical_skill_ids, pool=available_ids
+    )
+
     payload = {
         'target_job_context': plan.target_job_context.model_dump(mode='json'),
         'ordered_sections': ordered_sections,
         'prioritized_skills': prioritized_skills,
+        'technical_skills_evidence': technical_skills_evidence,
         'professional_summary_blueprint': summary_blueprint,
     }
     return (
@@ -948,6 +1043,34 @@ def _check_contact_pii(
         )
 
 
+def _skill_grounded_in_evidence(
+    skill_text: str,
+    evidence_ids: Iterable[str],
+    records: Mapping[str, EvidenceRecord],
+    selected: set[str],
+) -> bool:
+    identifiers = list(evidence_ids)
+    if not identifiers:
+        return False
+    normalized_skill = ' '.join((skill_text or '').strip().split())
+    if not normalized_skill:
+        return False
+    pattern = re.compile(
+        r'(?<![A-Za-z0-9_])' + re.escape(normalized_skill) + r'(?![A-Za-z0-9_])',
+        re.IGNORECASE,
+    )
+    for identifier in identifiers:
+        if identifier not in selected:
+            return False
+        record = records.get(identifier)
+        if record is None or _record_is_pii_only(record):
+            return False
+        normalized_source = ' '.join(record.original_content.split())
+        if not pattern.search(normalized_source):
+            return False
+    return True
+
+
 def validate_tailored_resume(
     payload: TailoredResumePayload,
     plan: ResumeSectionPlan,
@@ -965,6 +1088,12 @@ def validate_tailored_resume(
     records = {record.evidence_id: record for record in catalog.evidence_records}
     provenance = {reference.evidence_id: reference for reference in plan.evidence_provenance}
     selected = set(plan.selected_evidence_ids)
+    technical_skill_ids = {
+        record.evidence_id
+        for record in catalog.evidence_records
+        if _is_technical_skill_catalog_record(record)
+    }
+    allowed_skill_evidence = selected | technical_skill_ids
     findings: list[ClaimValidationFinding] = []
     metric_severity = 'error' if strict_metrics else 'warning'
 
@@ -983,7 +1112,7 @@ def validate_tailored_resume(
             evidence_ids=list(dict.fromkeys(evidence_ids)),
         ))
 
-    for identifier in plan.selected_evidence_ids:
+    for identifier in dict.fromkeys([*plan.selected_evidence_ids, *technical_skill_ids]):
         record = records.get(identifier)
         reference = provenance.get(identifier)
         if (
@@ -1004,9 +1133,11 @@ def validate_tailored_resume(
         allowed: set[str],
         location: str,
         out_of_scope_code: str,
+        pool: Optional[set[str]] = None,
     ) -> None:
+        effective_pool = selected if pool is None else pool
         for identifier in identifiers:
-            if identifier not in selected:
+            if identifier not in effective_pool:
                 add(
                     'error',
                     'evidence_not_selected',
@@ -1066,17 +1197,33 @@ def validate_tailored_resume(
             _check_contact_pii(item.skill_text, location, add)
             planned = planned_skills.get(skill_identity(item.skill_text))
             if planned is None:
-                add(
-                    'error',
-                    'skill_not_planned',
-                    location,
-                    'Generated skill is not anchored in the planned skills.',
+                scope_check(
                     item.evidence_ids,
+                    allowed_skill_evidence,
+                    location,
+                    'skill_evidence_out_of_scope',
+                    pool=allowed_skill_evidence,
                 )
-                scope_check(item.evidence_ids, selected, location, 'skill_evidence_out_of_scope')
-                continue
-            allowed = set(planned.matched_evidence_ids) & selected
-            scope_check(item.evidence_ids, allowed, location, 'skill_evidence_out_of_scope')
+                if not _skill_grounded_in_evidence(
+                    item.skill_text, item.evidence_ids, records, allowed_skill_evidence
+                ):
+                    add(
+                        'error',
+                        'skill_not_planned',
+                        location,
+                        'Generated skill is not anchored in the planned skills or cited selected evidence.',
+                        item.evidence_ids,
+                    )
+                    continue
+            else:
+                allowed = set(planned.matched_evidence_ids) & allowed_skill_evidence
+                scope_check(
+                    item.evidence_ids,
+                    allowed,
+                    location,
+                    'skill_evidence_out_of_scope',
+                    pool=allowed_skill_evidence,
+                )
             _check_numeric_claims(
                 item.skill_text,
                 [records[i].original_content for i in item.evidence_ids if i in records],
@@ -1148,8 +1295,10 @@ def validate_tailored_resume(
                 continue
             entry_scope = set(planned_entry.selected_evidence_ids)
             _check_contact_pii(entry.title, f'{entry_location}.title', add)
-            if entry.meta is not None:
-                _check_contact_pii(entry.meta, f'{entry_location}.meta', add)
+            for field_name in ('organization', 'dates', 'location', 'tech_stack', 'meta'):
+                field_value = getattr(entry, field_name)
+                if field_value is not None:
+                    _check_contact_pii(field_value, f'{entry_location}.{field_name}', add)
             for bullet_index, bullet in enumerate(entry.bullets):
                 bullet_location = f'{entry_location}.bullets[{bullet_index}]'
                 scope_check(
@@ -1171,10 +1320,13 @@ def validate_tailored_resume(
             _check_numeric_claims(
                 entry.title, entry_content, f'{entry_location}.title', metric_severity, add
             )
-            if entry.meta is not None:
-                _check_numeric_claims(
-                    entry.meta, entry_content, f'{entry_location}.meta', metric_severity, add
-                )
+            for field_name in ('organization', 'dates', 'location', 'tech_stack', 'meta'):
+                field_value = getattr(entry, field_name)
+                if field_value is not None:
+                    _check_numeric_claims(
+                        field_value, entry_content, f'{entry_location}.{field_name}',
+                        metric_severity, add,
+                    )
 
     traceability_verified = not any(
         finding.severity == 'error' and finding.code != 'ungrounded_metric'

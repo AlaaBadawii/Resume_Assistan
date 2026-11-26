@@ -510,3 +510,248 @@ def test_non_integer_transport_status_is_sanitized(status):
     with pytest.raises(LLMResponseFormatError, match='invalid HTTP status') as failure:
         client.generate(instructions='i', input_text='j')
     assert SECRET_MARKER not in str(failure.value)
+
+
+# ---------------------------------------------------------------------------
+# Multi-provider support: chat_completions & gemini
+# ---------------------------------------------------------------------------
+
+
+def test_llm_client_alias_matches_agent_router_client():
+    from resume_assistant.llm_client import LLMClient
+    assert LLMClient is AgentRouterClient
+
+
+def test_from_env_responses_falls_back_to_model_when_agentrouter_model_unset():
+    config = LLMConfig.from_env({
+        API_KEY_ENV_VAR: API_KEY,
+        'MODEL': 'gpt-6.2-sol',
+    })
+    assert config.provider == 'responses'
+    assert config.model == 'gpt-6.2-sol'
+
+
+@pytest.mark.parametrize('bad_provider', ['', '   ', 'anthropic', 'openai'])
+def test_from_env_rejects_invalid_provider(bad_provider):
+    with pytest.raises(LLMConfigurationError, match='LLM provider'):
+        LLMConfig.from_env({'LLM_PROVIDER': bad_provider, API_KEY_ENV_VAR: API_KEY})
+
+
+def test_from_env_chat_completions_defaults_and_fallbacks():
+    config = LLMConfig.from_env({
+        'LLM_PROVIDER': ' Chat_Completions ',
+        'OPENAI_API_KEY': API_KEY,
+        'MODEL': 'gpt-4.1',
+        'LLM_TIMEOUT_SECONDS': '15.5',
+    })
+    assert config.provider == 'chat_completions'
+    assert config.api_key == API_KEY
+    assert config.base_url == 'https://api.openai.com/v1'
+    assert config.model == 'gpt-4.1'
+    assert config.endpoint == 'https://api.openai.com/v1/chat/completions'
+    assert config.timeout_seconds == 15.5
+
+    explicit = LLMConfig.from_env({
+        'LLM_PROVIDER': 'chat_completions',
+        'LLM_API_KEY': 'sk-explicit',
+        'OPENAI_API_KEY': 'sk-fallback',
+        'LLM_BASE_URL': 'https://gateway.test/openai/v1/',
+        'LLM_MODEL': 'gpt-4o',
+        'MODEL': 'ignored-model',
+    })
+    assert explicit.api_key == 'sk-explicit'
+    assert explicit.base_url == 'https://gateway.test/openai/v1'
+    assert explicit.model == 'gpt-4o'
+    assert explicit.endpoint == 'https://gateway.test/openai/v1/chat/completions'
+
+
+def test_from_env_gemini_defaults_and_fallbacks():
+    config = LLMConfig.from_env({
+        'LLM_PROVIDER': 'GEMINI',
+        'GEMINI_API_KEY': API_KEY,
+    })
+    assert config.provider == 'gemini'
+    assert config.api_key == API_KEY
+    assert config.base_url == 'https://generativelanguage.googleapis.com/v1beta'
+    assert config.model == 'gemini-2.5-flash'
+    assert config.endpoint == (
+        'https://generativelanguage.googleapis.com/v1beta/models/'
+        'gemini-2.5-flash:generateContent'
+    )
+    assert config.timeout_seconds == DEFAULT_TIMEOUT_SECONDS
+
+    fallback = LLMConfig.from_env({
+        'LLM_PROVIDER': 'gemini',
+        'LLM_API_KEY': API_KEY,
+        'GEMINI_BASE_URL': 'https://gemini.test/v1beta/',
+        'MODEL': 'gemini-2.5-pro',
+        'LLM_TIMEOUT_SECONDS': '22',
+    })
+    assert fallback.base_url == 'https://gemini.test/v1beta'
+    assert fallback.model == 'gemini-2.5-pro'
+    assert fallback.timeout_seconds == 22.0
+
+
+@pytest.mark.parametrize('bad_model', ['models/gemini-2.5-flash', 'gemini?key=x', '../evil'])
+def test_gemini_rejects_unsafe_model_path_characters(bad_model):
+    with pytest.raises(LLMConfigurationError):
+        LLMConfig(provider='gemini', api_key=API_KEY, model=bad_model)
+
+
+@pytest.mark.parametrize('provider', ['chat_completions', 'gemini'])
+def test_non_loopback_http_rejected_for_all_providers(provider):
+    env_key = 'GEMINI_API_KEY' if provider == 'gemini' else 'LLM_API_KEY'
+    url_key = 'GEMINI_BASE_URL' if provider == 'gemini' else 'LLM_BASE_URL'
+    with pytest.raises(LLMConfigurationError) as failure:
+        LLMConfig.from_env({
+            'LLM_PROVIDER': provider,
+            env_key: API_KEY,
+            url_key: 'http://example.test/v1',
+        })
+    assert API_KEY not in str(failure.value)
+
+
+def test_chat_completions_generate_request_and_happy_path():
+    body = json.dumps({
+        'choices': [{
+            'finish_reason': 'stop',
+            'message': {
+                'role': 'assistant',
+                'content': '{"ok": true}',
+                'refusal': None,
+            },
+        }],
+    }).encode('utf-8')
+    transport = RecordingTransport(body=body)
+    config = LLMConfig(
+        provider='chat_completions',
+        api_key=API_KEY,
+        base_url='http://127.0.0.1:8080/v1',
+        model='gpt-4o',
+        timeout_seconds=12.0,
+    )
+    result = AgentRouterClient(config, http_post=transport).generate(
+        instructions='SYSTEM PROMPT', input_text='USER PROMPT',
+    )
+    assert result == '{"ok": true}'
+    assert len(transport.calls) == 1
+    call = transport.calls[0]
+    assert call['url'] == 'http://127.0.0.1:8080/v1/chat/completions'
+    assert call['headers']['Authorization'] == f'Bearer {API_KEY}'
+    assert call['headers']['User-Agent'] == USER_AGENT
+    assert call['payload'] == {
+        'model': 'gpt-4o',
+        'messages': [
+            {'role': 'system', 'content': 'SYSTEM PROMPT'},
+            {'role': 'user', 'content': 'USER PROMPT'},
+        ],
+        'stream': False,
+    }
+    assert call['timeout'] == 12.0
+
+
+def test_gemini_generate_uses_header_never_query_key_and_joins_parts():
+    body = json.dumps({
+        'candidates': [{
+            'finishReason': 'STOP',
+            'content': {
+                'role': 'model',
+                'parts': [
+                    {'text': 'internal reasoning', 'thought': True},
+                    {'text': '{"ok": '},
+                    {'text': 'true}'},
+                ],
+            },
+        }],
+    }).encode('utf-8')
+    transport = RecordingTransport(body=body)
+    config = LLMConfig(
+        provider='gemini',
+        api_key=API_KEY,
+        base_url='https://generativelanguage.googleapis.com/v1beta',
+        model='gemini-2.5-flash',
+        timeout_seconds=25.0,
+    )
+    result = AgentRouterClient(config, http_post=transport).generate(
+        instructions='SYSTEM PROMPT', input_text='USER PROMPT',
+    )
+    assert result == '{"ok": true}'
+    assert len(transport.calls) == 1
+    call = transport.calls[0]
+    assert call['url'] == (
+        'https://generativelanguage.googleapis.com/v1beta/models/'
+        'gemini-2.5-flash:generateContent'
+    )
+    assert '?key=' not in call['url']
+    assert API_KEY not in call['url']
+    assert call['headers']['x-goog-api-key'] == API_KEY
+    assert 'Authorization' not in call['headers']
+    assert call['headers']['User-Agent'] == USER_AGENT
+    assert call['payload'] == {
+        'system_instruction': {'parts': [{'text': 'SYSTEM PROMPT'}]},
+        'contents': [{'role': 'user', 'parts': [{'text': 'USER PROMPT'}]}],
+    }
+    assert call['timeout'] == 25.0
+
+
+@pytest.mark.parametrize('document, expected_error', [
+    ({'error': {'message': SECRET_MARKER}}, LLMProviderError),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': None, 'refusal': SECRET_MARKER}}]}, LLMProviderError),
+    ({'choices': [{'finish_reason': 'length', 'message': {'role': 'assistant', 'content': SECRET_MARKER}}]}, LLMProviderError),
+    ({'choices': [{'finish_reason': 'content_filter', 'message': {'role': 'assistant', 'content': SECRET_MARKER}}]}, LLMProviderError),
+    ({'choices': []}, LLMResponseFormatError),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': None}}]}, LLMResponseFormatError),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': '   '}}]}, LLMResponseFormatError),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'role': 'user', 'content': SECRET_MARKER}}]}, LLMResponseFormatError),
+    ({'choices': [{'message': {'role': 'assistant', 'content': SECRET_MARKER}}]}, LLMResponseFormatError),
+])
+def test_chat_completions_rejects_refusals_truncation_and_malformed_envelopes(
+    document, expected_error,
+):
+    config = LLMConfig(provider='chat_completions', api_key=API_KEY, model='gpt-4o')
+    client = AgentRouterClient(
+        config, http_post=RecordingTransport(body=json.dumps(document).encode('utf-8')),
+    )
+    with pytest.raises(expected_error) as failure:
+        client.generate(instructions='i', input_text='j')
+    assert SECRET_MARKER not in str(failure.value)
+    assert API_KEY not in str(failure.value)
+
+
+@pytest.mark.parametrize('document, expected_error', [
+    ({'error': {'message': SECRET_MARKER}}, LLMProviderError),
+    ({'promptFeedback': {'blockReason': 'SAFETY', 'safetyRatings': [SECRET_MARKER]}}, LLMProviderError),
+    ({'candidates': [{'finishReason': 'SAFETY', 'content': {'parts': [{'text': SECRET_MARKER}]}}]}, LLMProviderError),
+    ({'candidates': [{'finishReason': 'MAX_TOKENS', 'content': {'parts': [{'text': SECRET_MARKER}]}}]}, LLMProviderError),
+    ({'candidates': []}, LLMResponseFormatError),
+    ({'candidates': [{'finishReason': 'STOP', 'content': {'parts': []}}]}, LLMResponseFormatError),
+    ({'candidates': [{'finishReason': 'STOP', 'content': {'parts': [{'text': '  '}]}}]}, LLMResponseFormatError),
+    ({'candidates': [{'finishReason': 'STOP', 'content': {'parts': [{'text': SECRET_MARKER, 'thought': True}]}}]}, LLMResponseFormatError),
+    ({'candidates': [{'content': {'parts': [{'text': SECRET_MARKER}]}}]}, LLMResponseFormatError),
+])
+def test_gemini_rejects_safety_blocks_truncation_and_malformed_envelopes(
+    document, expected_error,
+):
+    config = LLMConfig(provider='gemini', api_key=API_KEY)
+    client = AgentRouterClient(
+        config, http_post=RecordingTransport(body=json.dumps(document).encode('utf-8')),
+    )
+    with pytest.raises(expected_error) as failure:
+        client.generate(instructions='i', input_text='j')
+    assert SECRET_MARKER not in str(failure.value)
+    assert API_KEY not in str(failure.value)
+
+
+@pytest.mark.parametrize('provider', ['chat_completions', 'gemini'])
+def test_http_errors_do_not_leak_api_key_or_body_for_new_providers(provider):
+    config = LLMConfig(provider=provider, api_key=API_KEY, model='test-model')
+    transport = RecordingTransport(
+        status=401,
+        body=f'invalid key {API_KEY} {SECRET_MARKER}'.encode('utf-8'),
+    )
+    client = AgentRouterClient(config, http_post=transport)
+    with pytest.raises(LLMProviderError) as failure:
+        client.generate(instructions='i', input_text='j')
+    assert '401' in str(failure.value)
+    assert API_KEY not in str(failure.value)
+    assert SECRET_MARKER not in str(failure.value)

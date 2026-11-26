@@ -389,7 +389,7 @@ def test_generate_resume_end_to_end_produces_validated_json_and_docx(pipeline):
         if paragraph.style.name == 'Resume Section Heading'
     ]
     expected_headings = ['SUMMARY', 'TECHNICAL SKILLS'] + [
-        section.heading_text for section in plan.ordered_sections if section.entries
+        section.heading_text.upper() for section in plan.ordered_sections if section.entries
     ]
     assert headings == expected_headings
 
@@ -644,9 +644,103 @@ def test_header_does_not_duplicate_already_visible_hyperlink_targets():
     header = _build_header(SimpleNamespace(evidence_records=[record]))
 
     assert header.contact_lines == [
-        'LinkedIn: linkedin.com/in/ada',
-        'Portfolio: ada.dev/me',
+        'linkedin.com/in/ada',
+        'ada.dev/me',
     ]
+
+
+def test_header_deduplicates_mailto_and_strips_verbose_labels():
+    record = _evidence_record(
+        'Location: Cairo, Egypt\n'
+        'Phone: +1 (555) 010-9999\n'
+        'Email: ada@example.invalid\n'
+        'LinkedIn: linkedin.com/in/ada\n'
+        'GitHub: github.com/ada\n'
+        'Portfolio: ada.dev/me',
+        hyperlinks=[
+            HyperlinkBlock(text='ada@example.invalid', url='mailto:ada@example.invalid'),
+            HyperlinkBlock(text='LinkedIn', url='https://www.linkedin.com/in/ada'),
+        ],
+    )
+    mailto_only = _evidence_record(
+        'Email',
+        hyperlinks=[HyperlinkBlock(text='Email', url='mailto:ada2@example.invalid')],
+    )
+    header = _build_header(SimpleNamespace(evidence_records=[record, mailto_only]))
+
+    assert header.contact_lines == [
+        'Cairo, Egypt',
+        '+1 (555) 010-9999',
+        'ada@example.invalid',
+        'linkedin.com/in/ada',
+        'github.com/ada',
+        'ada.dev/me',
+        'ada2@example.invalid',
+    ]
+    assert not any('mailto:' in line.lower() for line in header.contact_lines)
+    assert not any(
+        line.startswith(('Location:', 'Phone:', 'Email:', 'LinkedIn:', 'GitHub:', 'Portfolio:'))
+        for line in header.contact_lines
+    )
+
+
+def test_header_excludes_non_header_section_hyperlinks_and_keeps_identity_links():
+    name_record = _evidence_record('Ada Lovelace')
+    identity_link_record = _evidence_record(
+        'GitHub',
+        section='professional-identity',
+        evidence_type=EvidenceType.PROFESSIONAL_SUMMARY,
+        hyperlinks=[HyperlinkBlock(
+            text='GitHub', url='https://github.com/ada',
+        )],
+    )
+    preamble_contact_record = _evidence_record(
+        'Portfolio',
+        section=None,
+        evidence_type=EvidenceType.CONTACT,
+        hyperlinks=[HyperlinkBlock(
+            text='Portfolio', url='https://ada.example.invalid/portfolio',
+        )],
+    )
+    project_record = _evidence_record(
+        'Built analytics dashboard (GitHub Repo, Live Demo)',
+        section='projects',
+        evidence_type=EvidenceType.PROJECT,
+        hyperlinks=[
+            HyperlinkBlock(
+                text='GitHub Repo', url='https://github.com/ada/analytics-dashboard',
+            ),
+            HyperlinkBlock(
+                text='Live Demo', url='https://demo.example.invalid/dashboard',
+            ),
+        ],
+    )
+    experience_record = _evidence_record(
+        'Led platform migration (Case Study: https://case.example.invalid/migration)',
+        section='professional-experience',
+        evidence_type=EvidenceType.EXPERIENCE,
+        hyperlinks=[
+            HyperlinkBlock(
+                text='Case Study', url='https://case.example.invalid/migration',
+            ),
+        ],
+    )
+    header = _build_header(SimpleNamespace(evidence_records=[
+        name_record,
+        identity_link_record,
+        preamble_contact_record,
+        project_record,
+        experience_record,
+    ]))
+
+    assert header.full_name == 'Ada Lovelace'
+    assert any('github.com/ada' in line for line in header.contact_lines)
+    assert any('ada.example.invalid/portfolio' in line for line in header.contact_lines)
+    assert not any('analytics-dashboard' in line for line in header.contact_lines)
+    assert not any('demo.example.invalid' in line for line in header.contact_lines)
+    assert not any('case.example.invalid' in line for line in header.contact_lines)
+    assert project_record.evidence_id not in header.source_evidence_ids
+    assert experience_record.evidence_id not in header.source_evidence_ids
 
 
 @pytest.mark.parametrize('line, expected', [
@@ -1114,3 +1208,444 @@ def test_unresolved_entry_with_legacy_catalog_hydrates_and_renders_letter(pipeli
     page = document.sections[0]
     assert page.page_width == Inches(8.5)
     assert page.page_height == Inches(11)
+
+
+def test_docx_renders_two_line_contact_uppercase_headings_entry_metadata_and_compact_edu(pipeline):
+    paths, *_ = pipeline
+    plan, catalog, _snapshot, _manifest = _loaded(paths['plan'], paths['candidate'])
+    records = {record.evidence_id: record for record in catalog.evidence_records}
+
+    exp_section = next(s for s in plan.ordered_sections if s.section_id == 'professional-experience')
+    proj_section = next(s for s in plan.ordered_sections if s.section_id == 'projects')
+    edu_section = next(s for s in plan.ordered_sections if s.section_id == 'education')
+    cert_section = next(s for s in plan.ordered_sections if s.section_id == 'certifications')
+
+    exp_entry = exp_section.entries[0]
+    proj_entry = proj_section.entries[0]
+    edu_entry = edu_section.entries[0]
+    cert_entry = cert_section.entries[0]
+    exp_bullets = [
+        {'text': records[eid].original_content.strip(), 'evidence_ids': [eid]}
+        for eid in exp_entry.selected_evidence_ids
+        if not records[eid].original_content.strip().startswith('Original synthetic')
+    ] or [{'text': records[exp_entry.selected_evidence_ids[0]].original_content.strip(),
+           'evidence_ids': [exp_entry.selected_evidence_ids[0]]}]
+
+    base_payload = _valid_payload(plan, catalog)
+    payload = TailoredResumePayload.model_validate({
+        'headline_title': 'AI & Backend Engineer',
+        'tagline': None,
+        'summary_sentences': base_payload['summary_sentences'],
+        'skill_groups': base_payload['skill_groups'],
+        'sections': [
+            {
+                'section_id': 'professional-experience',
+                'heading_text': exp_section.heading_text,
+                'entries': [{
+                    'entry_id': exp_entry.entry_id,
+                    'title': 'Software Engineer',
+                    'organization': 'Example Organization',
+                    'dates': '2021-2024',
+                    'location': 'Remote',
+                    'tech_stack': None,
+                    'meta': None,
+                    'bullets': exp_bullets,
+                }],
+            },
+            {
+                'section_id': 'projects',
+                'heading_text': proj_section.heading_text,
+                'entries': [{
+                    'entry_id': proj_entry.entry_id,
+                    'title': 'Synthetic Service',
+                    'organization': None,
+                    'dates': '2024',
+                    'location': None,
+                    'tech_stack': 'Python, SQL',
+                    'meta': None,
+                    'bullets': [{
+                        'text': records[proj_entry.selected_evidence_ids[-1]].original_content.strip(),
+                        'evidence_ids': [proj_entry.selected_evidence_ids[-1]],
+                    }],
+                }],
+            },
+            {
+                'section_id': 'education',
+                'heading_text': edu_section.heading_text,
+                'entries': [{
+                    'entry_id': edu_entry.entry_id,
+                    'title': 'Bachelor degree in Computer Science',
+                    'organization': 'Example University',
+                    'dates': '2017-2021',
+                    'location': None,
+                    'tech_stack': None,
+                    'meta': None,
+                    'bullets': [],
+                }],
+            },
+            {
+                'section_id': 'certifications',
+                'heading_text': cert_section.heading_text,
+                'entries': [{
+                    'entry_id': cert_entry.entry_id,
+                    'title': 'AWS Certified Developer',
+                    'organization': 'Amazon Web Services',
+                    'dates': None,
+                    'location': None,
+                    'tech_stack': None,
+                    'meta': None,
+                    'bullets': [],
+                }],
+            },
+        ],
+    })
+    header = DeterministicHeader(
+        full_name=NAME,
+        contact_lines=[
+            'Cairo, Egypt',
+            '+1 (555) 010-9999',
+            CONTACT_EMAIL,
+            'https://linkedin.com/in/candidate',
+            'https://github.com/candidate',
+        ],
+    )
+    artifact = TailoredResumeArtifact(
+        prompt_version=RESUME_GENERATION_PROMPT_VERSION,
+        plan_schema_version=plan.schema_version,
+        model='synthetic-generation-model',
+        header=header,
+        content=payload,
+        validation=GroundingValidationReport(traceability_verified=True, findings=[]),
+    )
+
+    document = docx_renderer.build_document(artifact)
+    contact_paragraphs = [
+        p.text for p in document.paragraphs if p.style.name == 'Resume Contact'
+    ]
+    assert contact_paragraphs == [
+        f'Cairo, Egypt  |  +1 (555) 010-9999  |  {CONTACT_EMAIL}',
+        'linkedin.com/in/candidate  |  github.com/candidate',
+    ]
+
+    headings = [
+        p.text for p in document.paragraphs if p.style.name == 'Resume Section Heading'
+    ]
+    assert headings == [
+        'SUMMARY',
+        'TECHNICAL SKILLS',
+        exp_section.heading_text.upper(),
+        proj_section.heading_text.upper(),
+        edu_section.heading_text.upper(),
+        cert_section.heading_text.upper(),
+    ]
+
+    texts = [p.text for p in document.paragraphs]
+    assert 'Software Engineer — Example Organization' in texts
+    assert 'Remote | 2021-2024' in texts
+    assert 'Synthetic Service | Python, SQL' in texts
+    assert '2024' in texts
+    assert 'Bachelor degree in Computer Science — Example University | 2017-2021' in texts
+    assert 'AWS Certified Developer — Amazon Web Services' in texts
+    bullet_count = sum(1 for p in document.paragraphs if p.style.name == 'List Bullet')
+    assert bullet_count == len(exp_bullets) + 1
+
+
+def test_supporting_skill_grounded_in_selected_evidence_passes_validation(pipeline):
+    paths, *_ = pipeline
+    plan, catalog, _snapshot, _manifest = _loaded(paths['plan'], paths['candidate'])
+    records = {record.evidence_id: record for record in catalog.evidence_records}
+    k8s_id = next(
+        identifier for identifier in plan.selected_evidence_ids
+        if 'Kubernetes' in records[identifier].original_content
+    )
+    data = _valid_payload(plan, catalog)
+    data['skill_groups'].append({
+        'group_name': 'Databases & DevOps',
+        'skills': [{'skill_text': 'Kubernetes', 'evidence_ids': [k8s_id]}],
+    })
+    payload = TailoredResumePayload.model_validate(data)
+    report = validate_tailored_resume(payload, plan, catalog, raise_on_error=False)
+    assert report.traceability_verified is True
+    assert not any(f.code == 'skill_not_planned' for f in report.findings)
+
+
+def test_unselected_technical_skills_catalog_records_enter_provider_input_and_skill_validation(pipeline):
+    paths, *_ = pipeline
+    plan, catalog, snapshot, manifest = _loaded(paths['plan'], paths['candidate'])
+
+    # Add an extra TECHNICAL_SKILL record to the catalog that is NOT in plan.selected_evidence_ids,
+    # and register it as excluded in plan.evidence_provenance (simulating planner budget omission).
+    extra_text = 'FastAPI, Redis, pytest, Docker Compose Email: hidden@example.invalid'
+    extra_id = hashlib.sha256(b'extra-tech-skill-record').hexdigest()
+    extra_record = EvidenceRecord(
+        evidence_id=extra_id,
+        evidence_type=EvidenceType.TECHNICAL_SKILL,
+        original_content=extra_text,
+        section_reference='technical-skills-database',
+    )
+    heading_id = hashlib.sha256(b'heading-tech-skill-record').hexdigest()
+    heading_record = EvidenceRecord(
+        evidence_id=heading_id,
+        evidence_type=EvidenceType.TECHNICAL_SKILL,
+        original_content='2. Technical Profile',
+        section_reference='technical-profile',
+        formatting={'style': 'Heading 1'},
+    )
+    updated_catalog = catalog.model_copy(update={
+        'evidence_records': [*catalog.evidence_records, extra_record, heading_record],
+    })
+    template_prov = plan.evidence_provenance[0]
+    updated_plan = plan.model_copy(update={
+        'evidence_provenance': [
+            *plan.evidence_provenance,
+            template_prov.model_copy(update={
+                'evidence_id': extra_id,
+                'content_sha256': content_sha256(extra_text),
+            }),
+            template_prov.model_copy(update={
+                'evidence_id': heading_id,
+                'content_sha256': content_sha256('2. Technical Profile'),
+            }),
+        ],
+    })
+
+    hydrated = hydrate_plan_evidence(updated_plan, updated_catalog, snapshot, manifest)
+    provider_payload = json.loads(hydrated.llm_input_text)
+    tech_evidence = provider_payload['technical_skills_evidence']
+    tech_contents = [item['original_content'] for item in tech_evidence]
+
+    assert extra_id in hydrated.evidence_alias_by_id
+    assert heading_id not in hydrated.evidence_alias_by_id
+    assert any('FastAPI, Redis, pytest, Docker Compose' in item for item in tech_contents)
+    assert 'hidden@example.invalid' not in hydrated.llm_input_text
+
+    # Valid discrete skills grounded in that unselected TECHNICAL_SKILL catalog record pass validation.
+    valid_data = _valid_payload(updated_plan, updated_catalog)
+    valid_data['skill_groups'].append({
+        'group_name': 'Databases & Caching',
+        'skills': [
+            {'skill_text': 'FastAPI', 'evidence_ids': [extra_id]},
+            {'skill_text': 'Redis', 'evidence_ids': [extra_id]},
+            {'skill_text': 'pytest', 'evidence_ids': [extra_id]},
+        ],
+    })
+    report = validate_tailored_resume(
+        TailoredResumePayload.model_validate(valid_data),
+        updated_plan,
+        updated_catalog,
+        raise_on_error=False,
+    )
+    assert report.traceability_verified is True
+    assert not report.findings
+
+    # Citing an unselected TECHNICAL_SKILL record in summary_sentences remains forbidden.
+    bad_summary = _valid_payload(updated_plan, updated_catalog)
+    bad_summary['summary_sentences'][0]['evidence_ids'] = [extra_id]
+    summary_report = validate_tailored_resume(
+        TailoredResumePayload.model_validate(bad_summary),
+        updated_plan,
+        updated_catalog,
+        raise_on_error=False,
+    )
+    assert summary_report.traceability_verified is False
+    assert any(f.code == 'evidence_not_selected' for f in summary_report.findings)
+
+
+def test_generate_resume_pdf_only_writes_0600_pdf_without_leftover_docx(pipeline, monkeypatch):
+    from pathlib import Path
+    import shutil
+    import subprocess
+
+    paths, _commands, _transport, *_ = pipeline
+    pdf_path = paths['resume_json'].parent / 'tailored_resume.pdf'
+    recorded = {}
+
+    def fake_which(name):
+        return '/usr/bin/soffice' if name == 'soffice' else None
+
+    def fake_run(command, **kwargs):
+        recorded['command'] = list(command)
+        recorded['timeout'] = kwargs.get('timeout')
+        outdir = Path(command[command.index('--outdir') + 1])
+        source_docx = Path(command[-1])
+        assert source_docx.is_file()
+        (outdir / f'{source_docx.stem}.pdf').write_bytes(b'%PDF-1.4\n%synthetic\n')
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(shutil, 'which', fake_which)
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    exit_code = cli.main([
+        'generate-resume',
+        '--plan', str(paths['plan']),
+        '--candidate-evidence', str(paths['candidate']),
+        '--output-json', str(paths['resume_json']),
+        '--output-pdf', str(pdf_path),
+    ])
+
+    assert exit_code == 0
+    assert paths['resume_json'].is_file()
+    assert pdf_path.is_file()
+    assert pdf_path.read_bytes().startswith(b'%PDF-')
+    assert stat.S_IMODE(pdf_path.stat().st_mode) == 0o600
+    assert not paths['resume_docx'].exists()
+    assert list(paths['resume_json'].parent.glob('*.docx')) == []
+    assert list(paths['resume_json'].parent.glob('.resume-pdf-*')) == []
+    assert recorded['command'][:6] == [
+        '/usr/bin/soffice', '--headless', '--nologo', '--nofirststartwizard',
+        '--convert-to', 'pdf',
+    ]
+    assert recorded['timeout'] == 60
+
+
+def test_generate_resume_with_docx_and_pdf_writes_both_with_0600(pipeline, monkeypatch):
+    from pathlib import Path
+    import shutil
+    import subprocess
+
+    paths, _commands, _transport, *_ = pipeline
+    pdf_path = paths['resume_json'].parent / 'tailored_resume.pdf'
+    recorded = {}
+
+    monkeypatch.setattr(shutil, 'which', lambda name: '/usr/bin/libreoffice' if name == 'libreoffice' else None)
+
+    def fake_run(command, **kwargs):
+        recorded['source_docx'] = Path(command[-1])
+        outdir = Path(command[command.index('--outdir') + 1])
+        (outdir / f'{recorded["source_docx"].stem}.pdf').write_bytes(b'%PDF-1.4\n%both\n')
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    exit_code = cli.main([
+        'generate-resume',
+        '--plan', str(paths['plan']),
+        '--candidate-evidence', str(paths['candidate']),
+        '--output-json', str(paths['resume_json']),
+        '--output-docx', str(paths['resume_docx']),
+        '--output-pdf', str(pdf_path),
+    ])
+
+    assert exit_code == 0
+    assert paths['resume_docx'].is_file()
+    assert pdf_path.is_file()
+    assert recorded['source_docx'] == paths['resume_docx']
+    assert stat.S_IMODE(paths['resume_docx'].stat().st_mode) == 0o600
+    assert stat.S_IMODE(pdf_path.stat().st_mode) == 0o600
+
+
+def test_generate_resume_requires_docx_or_pdf_and_confines_pdf_path(pipeline, capsys):
+    paths, _commands, transport, *_ = pipeline
+    calls = len(transport.calls)
+
+    # Neither --output-docx nor --output-pdf -> exit code 2, no provider call
+    assert cli.main([
+        'generate-resume',
+        '--plan', str(paths['plan']),
+        '--candidate-evidence', str(paths['candidate']),
+        '--output-json', str(paths['resume_json']),
+    ]) == 2
+    assert 'At least one of --output-docx or --output-pdf' in capsys.readouterr().out
+    assert len(transport.calls) == calls
+
+    # --output-pdf outside data/private/processed/ -> exit code 2
+    outside_pdf = paths['source'].parent / 'escaped.pdf'
+    assert cli.main([
+        'generate-resume',
+        '--plan', str(paths['plan']),
+        '--candidate-evidence', str(paths['candidate']),
+        '--output-json', str(paths['resume_json']),
+        '--output-pdf', str(outside_pdf),
+    ]) == 2
+    assert not outside_pdf.exists()
+    assert len(transport.calls) == calls
+
+    # --output-pdf aliasing --output-json or --output-docx -> exit code 2
+    assert cli.main([
+        'generate-resume',
+        '--plan', str(paths['plan']),
+        '--candidate-evidence', str(paths['candidate']),
+        '--output-json', str(paths['resume_json']),
+        '--output-docx', str(paths['resume_docx']),
+        '--output-pdf', str(paths['resume_docx']),
+    ]) == 2
+    assert len(transport.calls) == calls
+
+
+def test_render_resume_pdf_and_cli_fail_clearly_without_libreoffice(pipeline, monkeypatch, capsys):
+    import shutil
+
+    paths, _commands, transport, plan, catalog, snapshot, manifest = pipeline
+    hydrated = hydrate_plan_evidence(plan, catalog, snapshot, manifest)
+    payload = TailoredResumePayload.model_validate(_valid_payload(plan, catalog))
+    artifact = TailoredResumeArtifact(
+        prompt_version=RESUME_GENERATION_PROMPT_VERSION,
+        plan_schema_version=plan.schema_version,
+        model='synthetic-generation-model',
+        header=hydrated.header,
+        content=payload,
+        validation=validate_tailored_resume(payload, plan, catalog),
+    )
+
+    monkeypatch.setattr(shutil, 'which', lambda _name: None)
+    pdf_path = paths['resume_json'].parent / 'missing_lo.pdf'
+
+    with pytest.raises(RuntimeError, match='libreoffice-writer'):
+        docx_renderer.render_resume_pdf(artifact, pdf_path)
+    assert not pdf_path.exists()
+
+    calls = len(transport.calls)
+    exit_code = cli.main([
+        'generate-resume',
+        '--plan', str(paths['plan']),
+        '--candidate-evidence', str(paths['candidate']),
+        '--output-json', str(paths['resume_json']),
+        '--output-pdf', str(pdf_path),
+    ])
+    assert exit_code == 2
+    assert 'libreoffice-writer' in capsys.readouterr().out
+    assert len(transport.calls) == calls
+    assert not paths['resume_json'].exists()
+    assert not pdf_path.exists()
+
+
+def test_docx_contact_header_compacts_url_display_and_preserves_https_hyperlinks():
+    header = DeterministicHeader(
+        full_name='Ada Lovelace',
+        contact_lines=[
+            'Cairo, Egypt',
+            'ada@example.invalid',
+            'https://www.linkedin.com/in/ada/',
+            'http://www.github.com/ada/',
+            'https://ada.dev/me/',
+        ],
+    )
+    payload = TailoredResumePayload.model_validate({
+        'headline_title': 'Backend & AI Engineer',
+        'tagline': None,
+        'summary_sentences': [],
+        'skill_groups': [],
+        'sections': [],
+    })
+    artifact = TailoredResumeArtifact(
+        prompt_version=RESUME_GENERATION_PROMPT_VERSION,
+        plan_schema_version='2.0.0',
+        model='synthetic-generation-model',
+        header=header,
+        content=payload,
+        validation=GroundingValidationReport(traceability_verified=True, findings=[]),
+    )
+
+    document = docx_renderer.build_document(artifact)
+    contact_paragraphs = [
+        p for p in document.paragraphs if p.style.name == 'Resume Contact'
+    ]
+    assert [p.text for p in contact_paragraphs] == [
+        'Cairo, Egypt  |  ada@example.invalid',
+        'linkedin.com/in/ada  |  github.com/ada  |  ada.dev/me',
+    ]
+    assert [(h.text, h.url) for h in contact_paragraphs[1].hyperlinks] == [
+        ('linkedin.com/in/ada', 'https://www.linkedin.com/in/ada/'),
+        ('github.com/ada', 'http://www.github.com/ada/'),
+        ('ada.dev/me', 'https://ada.dev/me/'),
+    ]

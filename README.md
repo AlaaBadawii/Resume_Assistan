@@ -106,9 +106,20 @@ structures are diagnosed rather than treated as extracted facts.
 
 ### 2. Analyze the supplied job description
 
-Configure `AGENTROUTER_API_KEY` and optional `AGENTROUTER_BASE_URL`,
-`AGENTROUTER_MODEL`, and `AGENTROUTER_TIMEOUT_SECONDS` in your process environment.
-The names and defaults are documented in `.env.example`. If you maintain a local
+Select the provider via optional `LLM_PROVIDER` (`responses` [default],
+`chat_completions`, or `gemini`):
+- `responses`: `AGENTROUTER_API_KEY` and optional `AGENTROUTER_BASE_URL`,
+  `AGENTROUTER_MODEL` (fallback `MODEL`), and `AGENTROUTER_TIMEOUT_SECONDS`.
+- `chat_completions`: `LLM_API_KEY` (fallback `OPENAI_API_KEY` /
+  `AGENTROUTER_API_KEY`) and optional `LLM_BASE_URL` (fallback
+  `AGENTROUTER_BASE_URL`), `LLM_MODEL` (fallback `MODEL`), and
+  `LLM_TIMEOUT_SECONDS`.
+- `gemini`: `GEMINI_API_KEY` (fallback `LLM_API_KEY`) and optional
+  `GEMINI_BASE_URL` (`https://generativelanguage.googleapis.com/v1beta`),
+  `GEMINI_MODEL` (fallback `LLM_MODEL` / `MODEL`, default `gemini-2.5-flash`),
+  and `LLM_TIMEOUT_SECONDS`.
+
+The `responses` defaults are documented in `.env.example`. If you maintain a local
 `.env`, explicitly load your own file in the shell; the application has no
 automatic dotenv loader:
 
@@ -169,18 +180,25 @@ set -a; source .env; set +a
   --plan data/private/processed/resume_section_plan.json \
   --candidate-evidence data/private/processed/candidate_evidence.json \
   --output-json data/private/processed/tailored_resume.json \
-  --output-docx data/private/processed/tailored_resume.docx
+  --output-docx data/private/processed/tailored_resume.docx \
+  --output-pdf data/private/processed/tailored_resume.pdf
 ```
 
-Both inputs are required; the outputs default to the displayed paths. The
-deterministic header is built locally from identity/contact records. Only
-selected non-contact evidence from the approved plan is sent to the provider.
-Every generated claim must cite selected evidence in its permitted section/
-entry/skill scope; heading and ordering must match the plan. Numeric claims that
-are absent from the cited text produce warnings for human review; add
-`--strict-metrics` to make them hard failures. `--page-size {A4,Letter}` selects
-the DOCX page size (default A4). Semantic entailment is never claimed, and
-`human_review_required` is always true.
+Both inputs are required, and at least one of `--output-docx` or `--output-pdf`
+must be provided (`--output-json` defaults to
+`data/private/processed/tailored_resume.json`). Using `--output-pdf` converts
+the rendered ATS-safe DOCX via headless LibreOffice (`soffice` or `libreoffice`
+from the optional `libreoffice-writer` system package) without adding Python PDF
+dependencies; all outputs remain confined under `data/private/processed/` with
+mode `0600`. The deterministic header is built locally from identity/contact
+records. Only selected non-contact evidence from the approved plan (plus
+non-PII `technical-skills` catalog records for `skill_groups`) is sent to the
+provider. Every generated claim must cite selected evidence in its permitted
+section/entry/skill scope; heading and ordering must match the plan. Numeric
+claims that are absent from the cited text produce warnings for human review;
+add `--strict-metrics` to make them hard failures. `--page-size {A4,Letter}`
+selects the DOCX/PDF page size (default A4). Semantic entailment is never
+claimed, and `human_review_required` is always true.
 
 ## Inspect the plan
 
@@ -231,11 +249,11 @@ deterministically influence content caps, but `page_guarantee` is always false.
 
 Linux no-follow/descriptor-relative behavior is verified. Unsupported platforms
 fail closed; rendering fidelity, fsync/power-loss durability, and every privileged
-filesystem mutation are not guaranteed. Phase 4 core JSON/DOCX generation is
+filesystem mutation are not guaranteed. Phase 4 core JSON/DOCX/PDF generation is
 implemented and awaiting review; its numeric checks are heuristic, its DOCX is
-structurally ATS-safe but not visually verified in Word/LibreOffice, and live
-provider compatibility for the generation prompt is unverified. **Template
-filling and job-tailored PDF publication remain later work.**
+structurally ATS-safe, `--output-pdf` relies on an optional local
+`libreoffice-writer` installation (`soffice`/`libreoffice`), and template
+filling remains later work.
 
 ## Synthetic verification
 

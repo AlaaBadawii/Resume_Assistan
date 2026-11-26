@@ -1,6 +1,7 @@
 '''Minimal local CLI for the resume extraction layer.'''
 
 import argparse
+import contextlib
 import json
 import os
 import stat
@@ -55,6 +56,7 @@ DEFAULT_JOB_MATCH_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_candidate_match.jso
 DEFAULT_SECTION_PLAN_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'resume_section_plan.json'
 DEFAULT_RESUME_JSON_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'tailored_resume.json'
 DEFAULT_RESUME_DOCX_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'tailored_resume.docx'
+_DEFAULT_RENDER_RESUME_PDF = docx_renderer.render_resume_pdf
 
 
 class ExtractionConfigurationError(ValueError):
@@ -473,8 +475,10 @@ def _reject_generation_aliases(
             for output in output_paths
             for path in protected_paths
         )
-        outputs_alias = (
-            len(output_paths) == 2 and _paths_alias(output_paths[0], output_paths[1])
+        outputs_alias = any(
+            _paths_alias(output_paths[i], output_paths[j])
+            for i in range(len(output_paths))
+            for j in range(i + 1, len(output_paths))
         )
     except (OSError, ValueError):
         raise PrivateInputError(
@@ -486,7 +490,7 @@ def _reject_generation_aliases(
         )
     if outputs_alias:
         raise ExtractionConfigurationError(
-            'Resume JSON and DOCX outputs must be distinct files.'
+            'Resume generation output paths must be distinct files.'
         )
 
 
@@ -495,19 +499,26 @@ def run_generate_resume(
     candidate_evidence_path: Path,
     output_json_path: Path | None = None,
     output_docx_path: Path | None = None,
+    output_pdf_path: Path | None = None,
     *,
     page_size: str = docx_renderer.DEFAULT_PAGE_SIZE,
     strict_metrics: bool = False,
-) -> tuple[Path, Path, TailoredResumeArtifact]:
+) -> tuple[Path, Path | None, TailoredResumeArtifact]:
+    if output_docx_path is None and output_pdf_path is None:
+        raise ExtractionConfigurationError(
+            'At least one of --output-docx or --output-pdf must be provided.'
+        )
     output_json_path = normalize_output_path(
         PROJECT_ROOT,
         output_json_path if output_json_path is not None else DEFAULT_RESUME_JSON_OUTPUT_PATH,
     )
-    output_docx_path = normalize_output_path(
-        PROJECT_ROOT,
-        output_docx_path if output_docx_path is not None else DEFAULT_RESUME_DOCX_OUTPUT_PATH,
-    )
+    if output_docx_path is not None:
+        output_docx_path = normalize_output_path(PROJECT_ROOT, output_docx_path)
+    if output_pdf_path is not None:
+        output_pdf_path = normalize_output_path(PROJECT_ROOT, output_pdf_path)
     docx_renderer.resolve_page_size(page_size)
+    if output_pdf_path is not None and docx_renderer.render_resume_pdf is _DEFAULT_RENDER_RESUME_PDF:
+        docx_renderer.find_pdf_converter()
     try:
         plan_path = Path(os.path.abspath(os.fspath(plan_path)))
         candidate_path = Path(os.path.abspath(os.fspath(candidate_evidence_path)))
@@ -516,13 +527,29 @@ def run_generate_resume(
             'Resume generation input paths must be readable local file paths.'
         ) from None
 
-    outputs = [output_json_path, output_docx_path]
+    outputs = [output_json_path]
+    if output_docx_path is not None:
+        outputs.append(output_docx_path)
+    if output_pdf_path is not None:
+        outputs.append(output_pdf_path)
     protected_paths = [plan_path, candidate_path]
     _reject_generation_aliases(outputs, protected_paths)
 
     json_target = PrivateOutput(PROJECT_ROOT, output_json_path)
-    docx_target = PrivateOutput(PROJECT_ROOT, output_docx_path)
-    with json_target, docx_target:
+    docx_target = (
+        PrivateOutput(PROJECT_ROOT, output_docx_path)
+        if output_docx_path is not None else None
+    )
+    pdf_target = (
+        PrivateOutput(PROJECT_ROOT, output_pdf_path)
+        if output_pdf_path is not None else None
+    )
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(json_target)
+        if docx_target is not None:
+            stack.enter_context(docx_target)
+        if pdf_target is not None:
+            stack.enter_context(pdf_target)
         plan = _load_section_plan_artifact(plan_path)
 
         try:
@@ -558,20 +585,48 @@ def run_generate_resume(
                 'Tailored resume JSON round-trip validation failed.'
             )
 
-        docx_bytes = docx_renderer.render_docx_bytes(artifact, page_size=page_size)
+        docx_bytes = (
+            docx_renderer.render_docx_bytes(artifact, page_size=page_size)
+            if docx_target is not None else None
+        )
 
         # Recheck identities after generation/serialization, before publication.
         _reject_generation_aliases(outputs, protected_paths)
         json_target.ensure_current()
-        docx_target.ensure_current()
-        json_target.write_json(payload)
-        docx_target.write_bytes(docx_bytes)
+        if docx_target is not None:
+            docx_target.ensure_current()
+        if pdf_target is not None:
+            pdf_target.ensure_current()
 
-    _print_generation_summary(artifact, output_json_path, output_docx_path)
+        if pdf_target is not None and docx_target is None:
+            docx_renderer.render_resume_pdf(
+                artifact, output_pdf_path, page_size=page_size
+            )
+            pdf_target.ensure_current()
+            json_target.write_json(payload)
+        else:
+            json_target.write_json(payload)
+            if docx_target is not None and docx_bytes is not None:
+                docx_target.write_bytes(docx_bytes)
+            if pdf_target is not None and output_pdf_path is not None:
+                docx_renderer.render_resume_pdf(
+                    artifact,
+                    output_pdf_path,
+                    page_size=page_size,
+                    docx_path=output_docx_path,
+                )
+                pdf_target.ensure_current()
+
+    _print_generation_summary(artifact, output_json_path, output_docx_path, output_pdf_path)
     return output_json_path, output_docx_path, artifact
 
 
-def _print_generation_summary(artifact, output_json_path, output_docx_path) -> None:
+def _print_generation_summary(
+    artifact,
+    output_json_path,
+    output_docx_path,
+    output_pdf_path=None,
+) -> None:
     # Aggregate counts and verification flags only; never candidate content.
     report = artifact.validation
     counts = {'error': 0, 'warning': 0}
@@ -595,7 +650,10 @@ def _print_generation_summary(artifact, output_json_path, output_docx_path) -> N
     print(f'  findings_error: {counts.get("error", 0)}')
     print(f'  findings_warning: {counts.get("warning", 0)}')
     print(f'  output_json: {output_json_path}')
-    print(f'  output_docx: {output_docx_path}')
+    if output_docx_path is not None:
+        print(f'  output_docx: {output_docx_path}')
+    if output_pdf_path is not None:
+        print(f'  output_pdf: {output_pdf_path}')
 
 
 def _print_match_summary(match: CandidateJobMatch, output_path) -> None:
@@ -799,7 +857,7 @@ def main(argv=None) -> int:
     )
     generate_parser = subparsers.add_parser(
         'generate-resume',
-        help='Generate a validated, evidence-bound tailored resume JSON and DOCX.',
+        help='Generate a validated, evidence-bound tailored resume JSON, DOCX, and/or PDF.',
     )
     generate_parser.add_argument(
         '--plan',
@@ -818,8 +876,13 @@ def main(argv=None) -> int:
     )
     generate_parser.add_argument(
         '--output-docx',
-        default=str(DEFAULT_RESUME_DOCX_OUTPUT_PATH),
-        help='Path for the rendered tailored resume DOCX artifact.',
+        default=None,
+        help='Optional path for the rendered tailored resume DOCX artifact.',
+    )
+    generate_parser.add_argument(
+        '--output-pdf',
+        default=None,
+        help='Optional path for the LibreOffice-converted tailored resume PDF artifact.',
     )
     generate_parser.add_argument(
         '--page-size',
@@ -977,7 +1040,8 @@ def main(argv=None) -> int:
                 plan_path=Path(args.plan),
                 candidate_evidence_path=Path(args.candidate_evidence),
                 output_json_path=Path(args.output_json),
-                output_docx_path=Path(args.output_docx),
+                output_docx_path=Path(args.output_docx) if args.output_docx is not None else None,
+                output_pdf_path=Path(args.output_pdf) if args.output_pdf is not None else None,
                 page_size=args.page_size,
                 strict_metrics=args.strict_metrics,
             )

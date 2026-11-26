@@ -70,6 +70,10 @@ class GeneratedSkillGroup(StrictGenerationModel):
 class GeneratedEntry(StrictGenerationModel):
     entry_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
+    organization: str | None = None
+    dates: str | None = None
+    location: str | None = None
+    tech_stack: str | None = None
     meta: str | None = None
     bullets: list[GroundedClaim] = Field(default_factory=list)
 
