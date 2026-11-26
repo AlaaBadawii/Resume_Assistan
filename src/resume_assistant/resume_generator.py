@@ -737,19 +737,21 @@ def _build_llm_input(
             if identifier in allowed and content(identifier).strip()
         ]
 
-    ordered_alias_source_ids = list(
-        dict.fromkeys([*plan.selected_evidence_ids, *technical_skill_ids])
-    )
     evidence_alias_by_id = {
         identifier: f'E{index}'
         for index, identifier in enumerate(
             (
-                identifier for identifier in ordered_alias_source_ids
-                if identifier in available_ids and content(identifier).strip()
+                identifier for identifier in plan.selected_evidence_ids
+                if identifier in selected and content(identifier).strip()
             ),
             start=1,
         )
     }
+    extra_skill_index = 1
+    for identifier in technical_skill_ids:
+        if identifier not in evidence_alias_by_id and content(identifier).strip():
+            evidence_alias_by_id[identifier] = f'SK{extra_skill_index}'
+            extra_skill_index += 1
     entry_alias_by_id = {
         entry.entry_id: f'ENT{index}'
         for index, entry in enumerate(
@@ -1059,6 +1061,7 @@ def _skill_grounded_in_evidence(
         r'(?<![A-Za-z0-9_])' + re.escape(normalized_skill) + r'(?![A-Za-z0-9_])',
         re.IGNORECASE,
     )
+    found_match = False
     for identifier in identifiers:
         if identifier not in selected:
             return False
@@ -1066,9 +1069,9 @@ def _skill_grounded_in_evidence(
         if record is None or _record_is_pii_only(record):
             return False
         normalized_source = ' '.join(record.original_content.split())
-        if not pattern.search(normalized_source):
-            return False
-    return True
+        if pattern.search(normalized_source):
+            found_match = True
+    return found_match
 
 
 def validate_tailored_resume(
@@ -1422,8 +1425,16 @@ def _sanitize_repair_details(
 
 
 def _repair_input(original_input: str, details: Iterable[dict[str, str]]) -> str:
+    sanitized = _sanitize_repair_details(details)
     feedback = json.dumps(
-        {'errors': _sanitize_repair_details(details)},
+        {
+            'errors': sanitized,
+            'repair_guidance': (
+                'Cite ONLY aliases from the exact target entry selected_evidence_ids '
+                'for entry bullets, and copy skill_text verbatim from cited evidence '
+                'or omit any ungrounded skill.'
+            ),
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(',', ':'),

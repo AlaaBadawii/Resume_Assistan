@@ -1340,11 +1340,11 @@ def test_docx_renders_two_line_contact_uppercase_headings_entry_metadata_and_com
     ]
 
     texts = [p.text for p in document.paragraphs]
-    assert 'Software Engineer — Example Organization' in texts
-    assert 'Remote | 2021-2024' in texts
-    assert 'Synthetic Service | Python, SQL' in texts
-    assert '2024' in texts
-    assert 'Bachelor degree in Computer Science — Example University | 2017-2021' in texts
+    assert 'Software Engineer — Example Organization\t2021-2024' in texts
+    assert 'Remote' in texts
+    assert 'Synthetic Service\t2024' in texts
+    assert 'Synthetic Service | Python, SQL' not in texts
+    assert 'Bachelor degree in Computer Science — Example University\t2017-2021' in texts
     assert 'AWS Certified Developer — Amazon Web Services' in texts
     bullet_count = sum(1 for p in document.paragraphs if p.style.name == 'List Bullet')
     assert bullet_count == len(exp_bullets) + 1
@@ -1649,3 +1649,119 @@ def test_docx_contact_header_compacts_url_display_and_preserves_https_hyperlinks
         ('github.com/ada', 'http://www.github.com/ada/'),
         ('ada.dev/me', 'https://ada.dev/me/'),
     ]
+
+
+def test_docx_executive_layout_inline_skills_right_tab_dates_and_no_tech_stack_dump(pipeline):
+    from docx.enum.text import WD_TAB_ALIGNMENT
+
+    paths, *_ = pipeline
+    plan, catalog, _snapshot, _manifest = _loaded(paths['plan'], paths['candidate'])
+    records = {record.evidence_id: record for record in catalog.evidence_records}
+
+    exp_section = next(s for s in plan.ordered_sections if s.section_id == 'professional-experience')
+    proj_section = next(s for s in plan.ordered_sections if s.section_id == 'projects')
+    exp_entry = exp_section.entries[0]
+    proj_entry = proj_section.entries[0]
+
+    skill_ids = [s.matched_evidence_ids[0] for s in plan.prioritized_skills]
+    payload = TailoredResumePayload.model_validate({
+        'headline_title': 'AI Engineer',
+        'tagline': None,
+        'summary_sentences': _valid_payload(plan, catalog)['summary_sentences'],
+        'skill_groups': [
+            {
+                'group_name': 'Languages & Backend',
+                'skills': [
+                    {'skill_text': 'Python', 'evidence_ids': [skill_ids[0]]},
+                    {'skill_text': 'SQL', 'evidence_ids': [skill_ids[-1]]},
+                ],
+            },
+        ],
+        'sections': [
+            {
+                'section_id': 'professional-experience',
+                'heading_text': exp_section.heading_text,
+                'entries': [{
+                    'entry_id': exp_entry.entry_id,
+                    'title': 'Backend Engineer',
+                    'organization': 'Example Corp',
+                    'dates': '2022-2024',
+                    'location': None,
+                    'tech_stack': 'Python, Docker, Redis',
+                    'meta': None,
+                    'bullets': [{
+                        'text': records[exp_entry.selected_evidence_ids[-1]].original_content.strip(),
+                        'evidence_ids': [exp_entry.selected_evidence_ids[-1]],
+                    }],
+                }],
+            },
+            {
+                'section_id': 'projects',
+                'heading_text': proj_section.heading_text,
+                'entries': [{
+                    'entry_id': proj_entry.entry_id,
+                    'title': 'RAG Pipeline',
+                    'organization': 'Independent',
+                    'dates': '2025',
+                    'location': None,
+                    'tech_stack': 'Python, BM25, Pydantic, Chroma, FastAPI',
+                    'meta': None,
+                    'bullets': [{
+                        'text': records[proj_entry.selected_evidence_ids[-1]].original_content.strip(),
+                        'evidence_ids': [proj_entry.selected_evidence_ids[-1]],
+                    }],
+                }],
+            },
+        ],
+    })
+    artifact = TailoredResumeArtifact(
+        prompt_version=RESUME_GENERATION_PROMPT_VERSION,
+        plan_schema_version=plan.schema_version,
+        model='synthetic-generation-model',
+        header=DeterministicHeader(full_name='Ada Lovelace', contact_lines=[]),
+        content=payload,
+        validation=GroundingValidationReport(traceability_verified=True, findings=[]),
+    )
+
+    document = docx_renderer.build_document(artifact)
+    assert len(document.tables) == 0
+    sec = document.sections[0]
+    assert sec.top_margin == Inches(0.45)
+    assert sec.bottom_margin == Inches(0.45)
+    assert sec.left_margin == Inches(0.5)
+    assert sec.right_margin == Inches(0.5)
+
+    inline_skill_paragraphs = [
+        p for p in document.paragraphs
+        if p.style.name == 'Resume Body' and p.text.startswith('Languages & Backend: ')
+    ]
+    assert len(inline_skill_paragraphs) == 1
+    skill_p = inline_skill_paragraphs[0]
+    assert skill_p.text == 'Languages & Backend: Python · SQL'
+    assert skill_p.runs[0].bold is True
+    assert skill_p.runs[1].bold is not True
+
+    all_text = '\n'.join(p.text for p in document.paragraphs)
+    assert 'BM25, Pydantic, Chroma' not in all_text
+    assert 'Docker, Redis' not in all_text
+
+    job_p = next(p for p in document.paragraphs if p.style.name == 'Resume Job Title')
+    assert job_p.text == 'Backend Engineer — Example Corp\t2022-2024'
+    assert any(ts.alignment == WD_TAB_ALIGNMENT.RIGHT for ts in job_p.paragraph_format.tab_stops)
+
+    proj_p = next(p for p in document.paragraphs if p.style.name == 'Resume Project Title')
+    assert proj_p.text == 'RAG Pipeline — Independent\t2025'
+    assert any(ts.alignment == WD_TAB_ALIGNMENT.RIGHT for ts in proj_p.paragraph_format.tab_stops)
+
+
+def test_generation_prompt_v15_specifies_dense_skills_metrics_and_overlap_rules():
+    from resume_assistant.prompts import RESUME_GENERATION_INSTRUCTIONS
+
+    assert RESUME_GENERATION_PROMPT_VERSION == '1.5.0'
+    assert '35 to 55' in RESUME_GENERATION_INSTRUCTIONS
+    assert '4 to 5' in RESUME_GENERATION_INSTRUCTIONS
+    assert 'Mandatory Quantified Metric Preservation' in RESUME_GENERATION_INSTRUCTIONS
+    assert 'Cross-Section Overlap Condensation' in RESUME_GENERATION_INSTRUCTIONS
+    for tier in ('Mid-Level', 'Senior', 'Staff', 'Principal', 'Architect'):
+        assert tier in RESUME_GENERATION_INSTRUCTIONS
+    assert 'selected_evidence_ids' in RESUME_GENERATION_INSTRUCTIONS
