@@ -5,21 +5,24 @@ Google Antigravity) and human reviewers. Update this file at the end of every
 mission. **This is a navigation aid — always verify claims against source
 code (see `AGENTS.md` §A).**
 
-Last updated: 2026-11-25 (Stages A–E APPROVED, including owner approval of Stage E at the Mission 3.3 closeout on 2026-11-25; latest authorized regression 1,419 collected / 1,412 passed / 7 documented private-source exclusions / 11 existing warnings; Mission 3.3 is APPROVED; parent Mission 3 remains in progress; Phase 4 generation is not implemented; historical approvals and accepted limitations are preserved).
+Last updated: 2026-11-26 (Stages A–E APPROVED, including owner approval of Stage E at the Mission 3.3 closeout on 2026-11-25; Mission 3.3 is APPROVED; Phase 4 core evidence-bound JSON/DOCX generation is IMPLEMENTED — AWAITING REVIEW (§O), with a 2026-11-26 pre-live-test hardening pass covering header contact extraction, contact-only PII exclusion, sanitized repair feedback, explicit required prompt keys, and early page-size validation; latest authorized synthetic regression 1,448 passed / 7 documented private-source exclusions / 11 existing warnings; parent Mission 3 remains in progress; historical approvals and accepted limitations are preserved).
 
 ---
 
 ## A. Project Overview
 
-**Objective.** A local Master Resume-driven application that will later generate
-job-tailored, ATS-friendly resumes from traceable candidate evidence. The current
-workflow is implemented through **schema-2 resume section planning**: pinned
-DOCX extraction, quotation-checked JD analysis, local component matching,
-source-derived evidence selection/entry grouping, relevance budgets, complete
-accounting, explicit summary bindings, source-aware validation, and private
-atomic publication. Only JD analysis is provider-enabled; candidate information
-does not enter that request. **Phase 4 AI resume/DOCX/PDF generation is not
-implemented.** Stages A–E are owner-approved; Mission 3.3 is APPROVED (2026-11-25).
+**Objective.** A local Master Resume-driven application that generates
+job-tailored, ATS-friendly resumes from traceable candidate evidence. The
+workflow is implemented through **schema-2 resume section planning** and Phase 4
+core generation: pinned DOCX extraction, quotation-checked JD analysis, local
+component matching, source-derived evidence selection/entry grouping, relevance
+budgets, complete accounting, explicit summary bindings, source-aware validation,
+private atomic publication, and evidence-bound JSON/DOCX generation. JD analysis
+sends only the supplied JD; generation sends only selected non-contact evidence
+from the approved plan. **Phase 4 core evidence-bound JSON/DOCX generation is
+implemented and AWAITING REVIEW (§O); job-tailored PDF/template-filling
+generation remains future work.** Stages A–E are owner-approved; Mission 3.3 is
+APPROVED (2026-11-25).
 
 **Current architecture.**
 
@@ -49,6 +52,12 @@ catalog/snapshot + job analysis + candidate/job match (validated, private)
     -> ResumeSectionPlan schema 2.0.0 (provenance + evidence-bound blueprint)
     -> JSON restoration + SectionPlanner.validate_result(original sources)
     -> private atomic data/private/processed/resume_section_plan.json
+
+resume_section_plan.json + committed candidate evidence (validated, private)
+    -> deterministic local header (identity/contact records stay local)
+    -> provider generation over selected non-contact evidence only
+    -> strict payload parse + evidence-scope/numeric-grounding validation
+    -> private atomic tailored_resume.json + ATS-safe tailored_resume.docx
 
 src/build_template.py -> templates/resume_template.docx (A4 blank template)
 tests/render_template_pdf.py -> output/resume_template_preview.pdf (approximate preview)
@@ -108,7 +117,8 @@ mission `APPROVED`; none of the approvals below are fabricated.**
 | 3.3 — Stage B | Supported-component skills, conservative deduplication/evidence aggregation, and type-safe background selection (B-01 through B-03) | `APPROVED` | Independent review verdict after F-1/F-2 remediation: **APPROVE WITH NON-BLOCKING OBSERVATIONS**. F-1 (contact-metadata filtering: extended/bare labels and profile URLs excluded; GitHub and GitHub Actions preserved) and F-2 (canonical-heading exclusion with boundaryless/partial snapshots; factual employment/project titles preserved) verified fixed with failing-first regressions. B-01/B-02 verified intact: supported-component skill emission, partial requirement handling, case/whitespace-only deduplication with evidence aggregation, owner-authorized additive `PlannedSkill.requirement_associations`, legacy plan loading, deterministic serialization across hash seeds 1/17/103. Approved by the project owner via explicit conditional authorization in the Stage B final review + Stage C implementation assignment ("This assignment explicitly authorizes Stage B acceptance and Stage C implementation, conditional on the review verdict"). Verification after remediation: planner/CLI 243 passed; SA-R01-focused 70 passed; publication/matcher 220 passed; Stage A/B external acceptance 50 passed; full authorized regression **1,145 collected, 1,138 passed, 7 documented private-source cases deselected, 0 failed, 11 existing warnings**; `pip check` and `git diff --check` pass. Non-blocking observations preserved: **O-1** plan schema stays `1.0.0` (additive `requirement_associations` owner-authorized, unreleased artifact); **O-2** heading-styled factual technical content may be excluded (documented limitation, no heading-policy redesign). This approval applies only to Stage B; Mission 3.3 was subsequently APPROVED at the owner closeout (2026-11-25). |
 | 3.3 — Stage C | Source-derived entry grouping, relevance budgets, source ordering, and complete evidence outcomes (C-01 through C-04) | `APPROVED` | Independent review initially returned **REQUEST CHANGES** for SC-R1 (discarded vertically merged identity rows), SC-R2 (numbering contamination across repeated source sections), and SC-R3 (skill truncation before evidence survival). Focused remediation binds merge-connected rows and nested support using snapshot metadata, resolves numbering within the enclosing section instance, and applies the skill cap after final evidence survival. Ambiguous spans retain no asserted identity and `entry_grouping_complete=False`. Pre-approval implementation status and verification are preserved in §L: 18 added DOCX-backed regressions, 65 Stage C cases, 243 planner/CLI cases, 220 publication/matcher cases, 70 safeguards; authorized regression **1,210 collected, 1,203 passed, 7 documented exclusions, 0 failed, 11 existing warnings**. Final independent review verdict: **APPROVE WITH NON-BLOCKING OBSERVATIONS**; no new blockers, and accepted unmarked/merge-metadata limits, unreleased schema-1 history, and heading-styled technical-content observations were preserved. The project owner explicitly approved Stages A, B, and C and authorized Stage D in the Stage D assignment; Stage C is recorded APPROVED on that authority. Stages A/B historical approvals remain in force. Mission 3.3 was subsequently APPROVED at the owner closeout (2026-11-25). |
 | 3.3 — Stage D | Strict output integrity, source-aware result validation, compact provenance, and evidence-bound blueprint (D-01 through D-04) | `APPROVED` | Output contract schema **2.0.0** has mandatory complete provenance and factual bindings; source-aware `SectionPlanner.validate_result` runs before private publication. Strict types, unambiguous JSON, section/entry/selection/accounting/budget relationships, supported component/parent associations, and blueprint projections are validated. Compact source coordinates/cell provenance and extraction generation hashes are retained without duplicating the resume body. Explicit schema-1 inspection plus validated-source re-planning preserves intentional historical compatibility. Pre-approval results are preserved in §M: 110 new cases; prior planner/CLI/Stage C 308 passed; publication/matcher 220 passed; safeguards 70 passed; all 14 external schema/provenance challenges passed; full external suite 72 passed / 4 accepted assertion failures; authorized regression **1,320 collected, 1,313 passed, 7 documented exclusions, 0 failed, 11 existing warnings**. Independent Stage D review verdict: **APPROVE WITH NON-BLOCKING OBSERVATIONS**; 418 focused cases and six independent source/compatibility challenges passed, with no new external failure class. Approval is recorded under the owner's explicit conditional authorization in the Stage D independent review + Stage E assignment. Existing lexical-support, unavailable-coordinate/generation, unmarked-entry and legacy-inspection observations are preserved. Stage E was authorized and is now APPROVED; Mission 3.3 is APPROVED at the owner closeout (2026-11-25). |
-| 3.3 — Stage E | Managed end-to-end integration, portable acceptance, contract compatibility, operational documentation and final verification (E-01 through E-05) | `APPROVED` | Conditional Stage D review passed and owner-authorized approval was recorded before Stage E work. Real four-command synthetic DOCX/JD workflow now has 23 managed integration cases with Responses-envelope/analyzer validation through an offline transport, plus the portable 76-case independent acceptance matrix. The matching CLI protects consumed generation catalog/snapshot aliases before matching and immediately before publication, preserving existing errors and schemas. README and extraction/analysis/matching/planning docs describe the actual workflow and Phase 4 boundary. All 99 added cases pass; prior planner/CLI/A–D 418 pass; publication/matcher 220 pass; safeguards 70 pass. Final authorized regression: **1,419 collected, 1,412 passed, 7 documented private-source cases deselected, 0 failed, 11 existing warnings**. Stage E is APPROVED and Mission 3.3 is APPROVED at the owner closeout (2026-11-25); Phase 4 has not begun. |
+| 3.3 — Stage E | Managed end-to-end integration, portable acceptance, contract compatibility, operational documentation and final verification (E-01 through E-05) | `APPROVED` | Conditional Stage D review passed and owner-authorized approval was recorded before Stage E work. Real four-command synthetic DOCX/JD workflow now has 23 managed integration cases with Responses-envelope/analyzer validation through an offline transport, plus the portable 76-case independent acceptance matrix. The matching CLI protects consumed generation catalog/snapshot aliases before matching and immediately before publication, preserving existing errors and schemas. README and extraction/analysis/matching/planning docs describe the actual workflow and Phase 4 boundary. All 99 added cases pass; prior planner/CLI/A–D 418 pass; publication/matcher 220 pass; safeguards 70 pass. Final authorized regression: **1,419 collected, 1,412 passed, 7 documented private-source cases deselected, 0 failed, 11 existing warnings**. Stage E is APPROVED and Mission 3.3 is APPROVED at the owner closeout (2026-11-25); Phase 4 had not begun at that closeout. |
+| 4 — core vertical slice | Evidence-bound tailored-resume JSON and ATS-safe single-column DOCX generation from a schema-2 plan plus committed candidate evidence | `IMPLEMENTED — AWAITING REVIEW` | Adds strict generation schema 1.0.0, deterministic local header, selected-only provider input, hard evidence-scope/order/heading validation, numeric-grounding warnings with optional strict failure, `generate-resume` CLI (JSON + DOCX, mode 0600), and 36 offline generation tests. Header extraction now covers professional-identity records plus snapshot headers/footers, preserves hyperlink targets once, supports non-ASCII/hyphenated/credentialed names and preamble mononyms, rejects profile labels as names, and excludes contact-only PII (including bare phone/portfolio/location labels) without dropping a technical-skill record whose content is `GitHub`. Repair retries use sanitized feedback (no raw hashes or PII), prompt v1.2.0 states every required key explicitly, and page size is validated before provider/output work. Contact/identity and excluded evidence never enter the provider request or artifact content. Full authorized regression: **1,448 passed, 7 documented private-source exclusions, 0 failed, 11 existing warnings**. No new runtime dependencies, no private-source reads, no commit/push. Not human-approved; PDF/template-filling generation remains future work (§O). |
 
 ---
 
@@ -129,17 +139,20 @@ approval/rejection states and their provenance have not been rewritten.
 | Section detector | `src/resume_assistant/section_detector.py` | Heuristic top-level section detection (bold/size/numbering signals); 14 sections detected on the Master Resume. |
 | Evidence builder | `src/resume_assistant/evidence.py` | Maps blocks → `EvidenceRecord`s with deterministic SHA-256 IDs and provenance; builds `CandidateEvidenceCatalog`. **Known defects — see §D.** |
 | Data models | `src/resume_assistant/models.py` | Schema 3.0.0 retained; optional located gaps, detailed completeness diagnostics, block locations, and header/footer part/reference metadata; existing fields and completeness formulas preserved. |
-| CLI | `src/resume_assistant/cli.py`, `__main__.py` | `extract-master`, `analyze-job`, offline `match-job`, and `plan-sections`; validated private artifacts, consumed-input alias protection, aggregate-only summaries. |
-| LLM client | `src/resume_assistant/llm_client.py` | Stdlib Responses transport with structural URL/finite-timeout validation, rejected redirects, required completed envelope, refusal/malformed-content rejection, and sanitized errors. HTTP is limited to numeric loopback endpoints; live provider contract remains unverified. |
+| CLI | `src/resume_assistant/cli.py`, `__main__.py` | `extract-master`, `analyze-job`, offline `match-job`, `plan-sections`, and `generate-resume`; validated private artifacts, consumed-input alias protection, aggregate-only summaries. |
+| LLM client | `src/resume_assistant/llm_client.py` | Stdlib Responses transport with structural URL/finite-timeout validation, rejected redirects, required completed envelope, refusal/malformed-content rejection, and sanitized errors. HTTP is limited to numeric loopback endpoints; live provider contract remains unverified. Phase 4 generation reuses this client for selected non-contact evidence. |
 | Job analysis models & prompt | `src/resume_assistant/job_models.py`, `src/resume_assistant/prompts.py` | Strict `JobDescriptionPayload` / `JobDescriptionAnalysis`, schema/prompt 2.0.0: cited scalars and source phrases, exact classification context, explicit uncertain skills, identical-item deduplication, conflict rejection, and application-owned AI-unverified metadata. |
 | Job analyzer | `src/resume_assistant/job_analyzer.py` | Strict JSON parse → Pydantic required-key/own-evidence validation → check every quotation/context against the original JD → canonical artifact. Textual checks are not semantic entailment or complete extraction; no candidate data is injected. |
-| Private output | `src/resume_assistant/private_output.py` | All CLI artifact outputs pin no-follow directory handles before processing; exclusive mode-0600 temporary creation, identity checks, and descriptor-relative atomic replacement/cleanup. Facility implementation unchanged in Mission 3.2.1. |
+| Private output | `src/resume_assistant/private_output.py` | All CLI artifact outputs pin no-follow directory handles before processing; exclusive mode-0600 temporary creation, identity checks, and descriptor-relative atomic replacement/cleanup. Phase 4 adds an additive `write_bytes` path for DOCX bytes; existing JSON behavior is unchanged. |
 | Local matcher and output models | `src/resume_assistant/matching.py`, `matching_models.py` | Boundary-aware phrases, standalone skill compounds, same-record language levels, actual-record coverage, source-derived unique requirement IDs, compact location/cell provenance, strict statuses, and source-validated JSON. Match schema 2.0.0; human review always required. |
 | Artifact input reader | `src/resume_assistant/private_input.py` | Shared pinned no-follow regular-file byte capture for DOCX and matching artifacts; immutable source filename/bytes/digest; traversal/symlink/change rejection and sanitized input errors. |
 | Structural coverage | `src/resume_assistant/document_coverage.py` | Parsed-document-only inventory: actual default/first/even relationships, linked ownership, unique part URIs, located unsupported inline/table/part diagnostics, conservative unavailable inventory state. |
 | Preview renderer | `tests/render_template_pdf.py` | Approximate WeasyPrint preview; reads page size/margins from the DOCX; writes `output/resume_template_preview.pdf`. Not Word-faithful. |
 | Resume planning/output contract | `section_planner.py`, `section_plan.py`, `legacy_section_plan.py` | Approved deterministic selection and schema-2 strict/source-aware output, compact provenance, evidence-bound blueprint, explicit legacy inspection/re-planning. |
-| Test suite | `tests/` + `fixtures/` | Latest authorized Stage E result: **1,419 collected / 1,412 passed / 7 private-source exclusions / 0 failed / 11 existing warnings**; preserved prior cases and 99 new end-to-end/independent acceptance cases. |
+| Generation models & prompt | `generation_models.py`, `prompts.py` | Strict generation schema 1.0.0 payload/artifact/report models and the Phase 4 prompt contract. |
+| Resume generator | `resume_generator.py` | Source/provenance re-verification, deterministic local header, selected-only provider input, strict payload parsing, hard evidence-scope/order/heading checks, and numeric-grounding warnings/strict mode. Never claims semantic entailment. |
+| DOCX renderer | `docx_renderer.py` | ATS-safe single-column DOCX bytes from the validated artifact: named styles matching the template, no tables/images/header/footer content, A4/Letter page sizes. |
+| Test suite | `tests/` + `fixtures/` | Latest authorized Stage E result: **1,419 collected / 1,412 passed / 7 private-source exclusions / 0 failed / 11 existing warnings**; preserved prior cases and 99 new end-to-end/independent acceptance cases. Phase 4 adds **36** offline generation cases; combined run **1,448 passed / 7 exclusions / 11 warnings**. |
 | Engineering instructions | `AGENTS.md` | Shared agent rules (onboarding, env, privacy, standards, missions, Git). |
 | Design/operations docs | `README.md`, `docs/template_design.md`, `docs/extraction.md`, `docs/job_analysis.md`, `docs/matching.md`, `docs/planning.md` | Owner workflow, artifact roles/versions, private use, inspection/migration, implemented limitations and later Phase 4 boundary. |
 
@@ -147,7 +160,10 @@ Default private locations (never committed; real contents not inspected in Missi
 `data/private/Master_Resume.docx`, `data/private/processed/candidate_evidence.json`,
 `data/private/processed/document_snapshot.json`,
 `data/private/processed/job_description_analysis.json`,
-`data/private/processed/job_candidate_match.json`.
+`data/private/processed/job_candidate_match.json`,
+`data/private/processed/resume_section_plan.json`,
+`data/private/processed/tailored_resume.json`,
+`data/private/processed/tailored_resume.docx`.
 
 ---
 
@@ -245,13 +261,26 @@ against source during Mission 1.3 inspection.)
 
 ## E. Current Stopping Point
 
+- **Phase 4 core vertical slice is `IMPLEMENTED — AWAITING REVIEW` (2026-11-26).**
+  `generate-resume` now produces a validated, evidence-bound tailored-resume JSON
+  artifact and an ATS-safe single-column DOCX from a schema-2 plan plus committed
+  candidate evidence (§O). The deterministic header stays local; the provider
+  request contains selected non-contact evidence only. The 2026-11-26 hardening
+  pass adds header contact/hyperlink extraction, contact-only PII exclusion,
+  sanitized repair feedback, explicit required prompt keys (v1.2.0), and early
+  page-size validation. Full authorized synthetic regression: 1,448 passed / 7
+  documented private-source exclusions / 0 failed / 11 existing warnings. No new
+  runtime dependencies, no private-source reads, no commit/push. **Not
+  human-approved**; PDF/template-filling generation remains future work.
+
 - **Mission 3.3 remediation — Stage E is `APPROVED` (owner closeout 2026-11-25).**
   Stages A–E are APPROVED and Mission 3.3 is APPROVED. The final integrated
   workflow, 76-case portable independent acceptance matrix, 23 full managed
   pipeline cases and current documentation are complete (§N). Final authorized
   run: 1,419 collected / 1,412 passed / 7 documented private-source exclusions /
   0 failed / 11 existing warnings. No prior test cases were modified or weakened
-  during Stage E. Phase 4 is not implemented.
+  during Stage E. Phase 4 core generation was subsequently implemented and
+  awaits review (§O).
 
 - **Mission 3.3 remediation — Stage A is `APPROVED`** by explicit project-owner decision in the Stage B authorization, following the final SA-R01 independent re-review. The original Mission 3.3 implementation entry above is retained as historical evidence, including its historical test-count claim; the current verified Stage A baseline is 1,087 collected / 1,080 passed / 7 private-source exclusions / 11 warnings. Mission 3.3 is APPROVED (owner closeout 2026-11-25); parent Mission 3 remains in progress.
 - **Mission 3.3 remediation — Stage B is `APPROVED`** by the project owner via
@@ -1284,3 +1313,91 @@ generation identity remain explicit and are not guessed. Live provider
 compatibility, rendering fidelity and power-loss durability are not established
 by this mission. The final plan is an evidence-bound input contract for Phase 4,
 not a generated resume. **APPROVED at the owner closeout (2026-11-25).**
+
+## O. Phase 4 — core resume generation (IMPLEMENTED — AWAITING REVIEW)
+
+**Status: IMPLEMENTED — AWAITING REVIEW (2026-11-25).** This is not an approval
+and does not change Mission 3.3/Mission 3 approval states. PDF generation,
+template filling, and any later Phase 4 scope are not implemented.
+
+### Delivered scope
+
+- `generate-resume` consumes a strict schema-2.0.0 `ResumeSectionPlan` plus the
+  committed candidate evidence pair and publishes two private artifacts:
+  `tailored_resume.json` (generation schema 1.0.0) and `tailored_resume.docx`.
+- The provider returns a strict payload (`headline_title`, optional `tagline`,
+  grounded summary sentences, skill groups, and ordered sections/entries/
+  bullets). Every generated claim must cite evidence IDs.
+- The header is deterministic and local: identity records first, otherwise a
+  conservative name-like fallback in `professional-identity`; contact lines come
+  from header-relevant records plus snapshot headers/footers, with hyperlink
+  targets preserved once and visible URLs deduplicated. Name detection accepts
+  non-ASCII, hyphenated, credentialed, and preamble-mononym forms while rejecting
+  organization/title lines. Contact/identity records are never sent to the
+  provider.
+- The provider input contains the target job context, hydrated ordered sections,
+  prioritized skills filtered to selected IDs, and a sanitized summary blueprint.
+  Excluded evidence and contact PII never enter the request; contact-only records
+  (including bare phone, portfolio, and `Location:` labels) are omitted and lose
+  their alias, while a technical-skill record whose content is `GitHub` is
+  preserved. Generated PII is rejected across headline/tagline/skill/entry/
+  bullet fields.
+- Generation retries once after parse, schema, or unknown-alias failure using
+  aliases plus sanitized feedback that excludes raw evidence hashes and PII.
+  Prompt v1.2.0 explicitly enumerates all required keys; invalid page sizes are
+  validated before provider or output work. DOCX output skips
+  `professional-summary`/`technical-skills` sections that are already rendered
+  from their dedicated fields.
+- Hard validation rejects unselected/integrity-failing evidence, out-of-scope
+  summary/entry/skill citations, unplanned skills/sections/entries, heading
+  mismatches, and section/entry order changes. Numeric claims absent from cited
+  evidence are `ungrounded_metric` warnings; `--strict-metrics` makes them hard
+  failures. Traceability is deterministic; semantic entailment is never claimed
+  (`semantic_entailment_verified=false`, `human_review_required=true`).
+- DOCX rendering is single-column with named styles matching the approved
+  template, no tables/images/Word header/footer content, and A4/Letter sizes.
+  Both outputs use the existing pinned no-follow, atomic, mode-0600 boundary;
+  `PrivateOutput.write_bytes` is additive for the binary artifact.
+
+### Files
+
+- New: `src/resume_assistant/generation_models.py`,
+  `src/resume_assistant/resume_generator.py`,
+  `src/resume_assistant/docx_renderer.py`,
+  `tests/test_resume_generation.py`.
+- Additive: `src/resume_assistant/prompts.py` (generation prompt contract),
+  `src/resume_assistant/private_output.py` (`write_bytes`),
+  `src/resume_assistant/private_input.py` (`section_plan` artifact label),
+  `src/resume_assistant/cli.py` (`generate-resume`, alias protection, exit codes).
+- Approved Stage A–D planner/matcher/extraction logic and existing tests were not
+  modified or weakened. No new runtime dependencies were introduced.
+
+### Verification
+
+- New offline suite: `tests/test_resume_generation.py` — **36 passed**. It runs
+  the real extract/analyze/match/plan/generate path with synthetic DOCX/JD data
+  and a deterministic Responses transport, then checks provider-input privacy,
+  header extraction/hyperlink deduplication, contact-only PII exclusion (including
+  preservation of a `GitHub` technical-skill record), PII validation across all
+  generated text fields, artifact modes, JSON round-trip,
+  DOCX structure/order, provenance tampering, fabricated/out-of-scope evidence,
+  abbreviated/decimal metric grounding, strict mode, alias repair (including
+  malformed JSON), legacy standalone catalog hydration, unresolved source spans,
+  Letter/A4 page sizes, and 0/2/3 exit codes.
+- Full authorized regression: **1,448 passed / 7 documented private-source
+  exclusions / 0 failed / 11 existing warnings** (same seven deselects as §N).
+- `pip check` and `git diff --check` pass. No private-source reads, live provider
+  requests, dependency changes, or Git commit/push/reset/branch operations were
+  performed.
+
+### Limitations
+
+- Lexical/numeric grounding is not semantic entailment or independent fact
+  verification; human review is mandatory.
+- Numeric warnings are heuristic token checks, not financial/date validation.
+- DOCX rendering is structurally ATS-safe but Word/LibreOffice visual fidelity is
+  not established; PDF output is not implemented.
+- Live provider compatibility for the generation prompt remains unverified by
+  offline tests.
+- No real Master Resume/private artifact was inspected. This mission awaits
+  independent review and explicit human approval.

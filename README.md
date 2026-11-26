@@ -2,11 +2,13 @@
 
 A local, **Master Resume-driven** Python application that extracts candidate
 evidence, analyzes a supplied job description, matches requirements locally,
-and privately publishes a deterministic, evidence-bound **resume section plan**.
+publishes a deterministic, evidence-bound **resume section plan**, and generates
+a validated, evidence-bound **tailored resume JSON + ATS-safe DOCX**.
 
 **Current milestone:** Mission 3.3 planning Stages A–E are owner-approved and
-Mission 3.3 is APPROVED (owner closeout 2026-11-25). **Phase 4 job-tailored
-DOCX/PDF resume generation is not implemented.**
+Mission 3.3 is APPROVED (owner closeout 2026-11-25). **Phase 4 core JSON/DOCX
+generation is IMPLEMENTED — AWAITING REVIEW; PDF/template-filling generation is
+not implemented.**
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for approval provenance and
 actual verification results.
 
@@ -28,12 +30,20 @@ Validated candidate evidence + analysis + match
     → strict schema-2 plan + compact provenance + evidence-bound blueprint
     → JSON restoration → source-aware result validation
     → mode-0600 private atomic publication
+
+Validated section plan + committed candidate evidence
+    → deterministic local header (identity/contact stay local)
+    → provider generation over selected non-contact evidence only
+    → strict payload parse + evidence-scope/numeric-grounding validation
+    → mode-0600 tailored_resume.json + tailored_resume.docx
 ```
 
 The Master Resume is the candidate source. The planner does not infer missing
-qualifications or generate resume prose. Analysis is the only provider-enabled
-stage: it sends the **job description**, not candidate evidence. Matching and
-planning work offline and do not require API configuration.
+qualifications. Analysis sends only the **job description**; generation sends
+only **selected non-contact evidence** from the approved plan. Matching and
+planning work offline; analysis and generation require API configuration.
+Contact/identity records and excluded evidence never enter the generation
+request.
 
 ## Requirements and setup
 
@@ -62,6 +72,8 @@ planning dependency is used.
 | `data/private/processed/job_description_analysis.json` | Job analysis schema **2.0.0**, prompt **2.0.0**, AI-unverified interpretations |
 | `data/private/processed/job_candidate_match.json` | Match schema **2.0.0**, explicit component support and human-review requirement |
 | `data/private/processed/resume_section_plan.json` | Plan schema **2.0.0**, complete provenance and explicit summary bindings |
+| `data/private/processed/tailored_resume.json` | Generation schema **1.0.0**, deterministic local header, grounded payload, and validation report |
+| `data/private/processed/tailored_resume.docx` | ATS-safe single-column DOCX rendered from the validated generation artifact |
 
 The committed generation files live below
 `data/private/processed/.extractions/<bundle_key>/generations/<generation_id>/`.
@@ -149,6 +161,27 @@ The serialized plan is restored and source-aware validated before atomic
 publication. Candidate/match/analysis aliases and consumed managed generation
 artifacts cannot be used as the match or plan destination.
 
+### 5. Generate a tailored resume
+
+```bash
+set -a; source .env; set +a
+.venv/bin/python -m resume_assistant generate-resume \
+  --plan data/private/processed/resume_section_plan.json \
+  --candidate-evidence data/private/processed/candidate_evidence.json \
+  --output-json data/private/processed/tailored_resume.json \
+  --output-docx data/private/processed/tailored_resume.docx
+```
+
+Both inputs are required; the outputs default to the displayed paths. The
+deterministic header is built locally from identity/contact records. Only
+selected non-contact evidence from the approved plan is sent to the provider.
+Every generated claim must cite selected evidence in its permitted section/
+entry/skill scope; heading and ordering must match the plan. Numeric claims that
+are absent from the cited text produce warnings for human review; add
+`--strict-metrics` to make them hard failures. `--page-size {A4,Letter}` selects
+the DOCX page size (default A4). Semantic entailment is never claimed, and
+`human_review_required` is always true.
+
 ## Inspect the plan
 
 The CLI prints aggregate counts, versions and review indicators, not candidate
@@ -173,12 +206,15 @@ Detailed validation/inspection examples and the compatibility policy are in
   `LegacyResumeSectionPlan`. Trusted schema-2 instructions require re-planning
   from validated original inputs; an old version label cannot bypass validation.
 - Private resume, JD, evidence, matches, plans, generated outputs, `.env`, and
-  virtual environments must never be committed. Do not send candidate material
-  to providers. Only JD analysis has a provider-enabled data flow.
+  virtual environments must never be committed. Candidate material is sent to a
+  provider only by `generate-resume`, and only selected non-contact evidence
+  from the approved plan; identity/contact records and excluded evidence stay
+  local. JD analysis sends only the supplied job description.
 - Application input/output paths use existing pinned no-follow/private atomic
-  facilities where documented. Match/plan destinations reject aliases to direct
-  inputs and resolved generation files, including aliases introduced during
-  processing. Outputs are confined to private processed storage and mode 0600.
+  facilities where documented. Match/plan/generation destinations reject aliases
+  to direct inputs and resolved generation files, including aliases introduced
+  during processing. Outputs are confined to private processed storage and mode
+  0600.
 - Expected input/version/integrity errors normally exit **2**; unexpected
   implementation/publication failures exit **3**; successful commands exit **0**.
   Summaries and controlled errors are aggregate/content-free.
@@ -195,8 +231,11 @@ deterministically influence content caps, but `page_guarantee` is always false.
 
 Linux no-follow/descriptor-relative behavior is verified. Unsupported platforms
 fail closed; rendering fidelity, fsync/power-loss durability, and every privileged
-filesystem mutation are not guaranteed. **Phase 4 AI resume generation, template
-filling, and job-tailored PDF publication remain later work.**
+filesystem mutation are not guaranteed. Phase 4 core JSON/DOCX generation is
+implemented and awaiting review; its numeric checks are heuristic, its DOCX is
+structurally ATS-safe but not visually verified in Word/LibreOffice, and live
+provider compatibility for the generation prompt is unverified. **Template
+filling and job-tailored PDF publication remain later work.**
 
 ## Synthetic verification
 

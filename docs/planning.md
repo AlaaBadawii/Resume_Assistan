@@ -1,8 +1,10 @@
 # Deterministic resume planning — Mission 3.3
 
 The planning pipeline consumes the user's existing Master Resume evidence and a
-supplied job description. It publishes a validated **instruction contract for
-Phase 4**, not an actual customized resume. Stages A–E are owner-approved and
+supplied job description. It publishes a validated **instruction contract** for
+Phase 4. The Phase 4 core generator now consumes that contract plus the committed
+candidate evidence to produce a validated tailored-resume JSON and ATS-safe DOCX;
+it is **IMPLEMENTED — AWAITING REVIEW**. Stages A–E are owner-approved and
 Mission 3.3 is APPROVED (owner closeout 2026-11-25). Approval provenance and
 exact verification results live in [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
@@ -14,6 +16,7 @@ exact verification results live in [PROJECT_STATUS.md](PROJECT_STATUS.md).
 | `analyze-job` | Regular UTF-8 job description; provider configuration | Quotation-checked analysis 2.0.0 / prompt 2.0.0 |
 | `match-job` | Validated analysis plus manifest-aware catalog input | Candidate-job match 2.0.0, checked against both inputs |
 | `plan-sections` | Analysis, match, and manifest-aware catalog/snapshot | Plan 2.0.0, JSON-restored and source-aware validated before private publication |
+| `generate-resume` | Plan 2.0.0 plus manifest-aware candidate evidence | Generation 1.0.0 JSON and ATS-safe DOCX, evidence-scope validated before private publication |
 
 ```bash
 .venv/bin/python -m resume_assistant extract-master \
@@ -37,6 +40,13 @@ set -a; source .env; set +a
   --match data/private/processed/job_candidate_match.json \
   --candidate-evidence data/private/processed/candidate_evidence.json \
   --output data/private/processed/resume_section_plan.json
+
+# Provider settings are also required for generation:
+.venv/bin/python -m resume_assistant generate-resume \
+  --plan data/private/processed/resume_section_plan.json \
+  --candidate-evidence data/private/processed/candidate_evidence.json \
+  --output-json data/private/processed/tailored_resume.json \
+  --output-docx data/private/processed/tailored_resume.docx
 ```
 
 The candidate default path is now the **manifest address**, not a catalog payload.
@@ -170,20 +180,59 @@ and fixed indicators, not candidate text or full provenance. Outputs are confine
 to private processed storage and mode 0600, using pinned no-follow directories,
 exclusive temporaries and descriptor-relative atomic replacement.
 
-Match and plan outputs cannot alias their direct inputs or consumed managed
-generation catalog/snapshot, including aliases introduced while processing.
-Validation/version/reference/checksum failures preserve previous output and return
-2. Unexpected implementation or private publication failures return 3, including
-SA-R01's unexpected `FileNotFoundError` cases. Success returns 0. The extraction
-manifest is the pair's commit point; orphan uncommitted generations never become
-the visible current pair after a failed publication.
+Provider data flows are explicit: `analyze-job` sends the supplied JD only;
+`generate-resume` sends only selected non-contact evidence from the approved
+plan. Identity/contact records and excluded evidence never enter the generation
+request. The deterministic header is assembled locally.
+
+Match, plan and generation outputs cannot alias their direct inputs or consumed
+managed generation catalog/snapshot, including aliases introduced while
+processing. Validation/version/reference/checksum failures preserve previous
+output and return 2. Unexpected implementation or private publication failures
+return 3, including SA-R01's unexpected `FileNotFoundError` cases. Success
+returns 0. The extraction manifest is the pair's commit point; orphan
+uncommitted generations never become the visible current pair after a failed
+publication.
 
 Linux behavior is verified; unsupported platforms fail closed. Privileged direct
 file modification, every directory-renaming window, Word rendering fidelity and
-power-loss durability are not guaranteed. Lexical support/quotation checks are
-not semantic entailment or independent qualification verification. Human review
-is mandatory; AI JD classifications remain unverified. Phase 4 generation is
-not implemented.
+power-loss durability are not guaranteed. Lexical support/quotation/numeric
+checks are not semantic entailment or independent qualification verification.
+Human review is mandatory; AI JD classifications remain unverified. Phase 4 core
+JSON/DOCX generation is implemented and awaiting review; template filling and
+PDF generation are not implemented.
+
+## Phase 4 generation contract
+
+`generate-resume` re-verifies plan source identity, every provenance hash, and
+the committed publication generation before any provider request. It then builds
+the deterministic local header and a compact provider input containing the target
+job context, hydrated ordered sections, selected prioritized skills, and a
+sanitized summary blueprint. Excluded evidence and contact/identity records are
+never included.
+
+The returned payload must be one unambiguous JSON object (an optional Markdown
+fence is stripped). Validation is deterministic:
+
+- every cited evidence ID must be selected, present, integrity-matching, and
+  within the permitted summary/entry/skill scope;
+- skills, sections, entries, headings, and section/entry order must match the
+  plan;
+- numeric claims absent from the cited text are `ungrounded_metric` warnings for
+  human review; `--strict-metrics` makes them hard failures.
+
+The published artifact records the generation schema/prompt/plan versions, model,
+local header, grounded payload, and validation report. `traceability_verified`
+covers deterministic evidence checks only; `semantic_entailment_verified` is
+always false and `human_review_required` is always true. The DOCX renderer emits
+a single-column document with named styles matching the approved template, no
+tables/images/Word header/footer content, and A4/Letter page sizes.
+
+`tests/test_resume_generation.py` runs the real five-command path with synthetic
+DOCX/JD data and a deterministic offline transport. It covers provider-input
+privacy, artifact modes, JSON round-trip, DOCX structure/order, provenance
+tampering, fabricated/out-of-scope evidence, ungrounded metrics, strict mode,
+alias protection, and 0/2/3 exit codes.
 
 ## Maintained integration and independent acceptance
 

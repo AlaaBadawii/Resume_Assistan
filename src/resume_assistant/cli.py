@@ -11,6 +11,7 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 from pydantic_core import PydanticSerializationError
 
+from resume_assistant import docx_renderer
 from resume_assistant import evidence as evidence_module
 from resume_assistant import extractor as extractor_module
 from resume_assistant import models
@@ -18,6 +19,7 @@ from resume_assistant import publication_integrity
 from resume_assistant import publication_reader
 from resume_assistant import publication_store
 from resume_assistant import section_detector as section_detector_module
+from resume_assistant.generation_models import TailoredResumeArtifact
 from resume_assistant.extractor import InvalidMasterResumeError
 from resume_assistant.job_analyzer import JobAnalysisError, JobAnalysisInputError, JobDescriptionAnalyzer
 from resume_assistant.job_models import JobDescriptionAnalysis
@@ -30,6 +32,10 @@ from resume_assistant.private_output import (
     PrivateOutput, PrivateOutputError, is_private_output, normalize_output_path,
 )
 from resume_assistant.publication import PublicationManifest, PublicationError
+from resume_assistant.resume_generator import (
+    ResumeGenerationError,
+    generate_tailored_resume,
+)
 from resume_assistant.section_planner import (
     PLAN_SCHEMA_VERSION,
     ExtractionGenerationIdentity,
@@ -47,6 +53,8 @@ DEFAULT_SNAPSHOT_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'document_snapshot.json'
 DEFAULT_ANALYSIS_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_description_analysis.json'
 DEFAULT_JOB_MATCH_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_candidate_match.json'
 DEFAULT_SECTION_PLAN_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'resume_section_plan.json'
+DEFAULT_RESUME_JSON_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'tailored_resume.json'
+DEFAULT_RESUME_DOCX_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'tailored_resume.docx'
 
 
 class ExtractionConfigurationError(ValueError):
@@ -447,6 +455,149 @@ def _reject_section_plan_aliases(output_path: Path, protected_paths: list[Path])
         raise ExtractionConfigurationError('Section plan output must not alias an input artifact.')
 
 
+def _load_section_plan_artifact(path) -> ResumeSectionPlan:
+    text = read_artifact_text(path, artifact='section_plan')
+    document = _parse_match_artifact(
+        text, label='Section plan artifact', schema_version=PLAN_SCHEMA_VERSION
+    )
+    return ResumeSectionPlan.model_validate_json(json.dumps(document))
+
+
+def _reject_generation_aliases(
+    output_paths: list[Path], protected_paths: list[Path]
+) -> None:
+    '''Reject input aliases and a JSON/DOCX output collision without content reads.'''
+    try:
+        aliases_input = any(
+            _paths_alias(path, output)
+            for output in output_paths
+            for path in protected_paths
+        )
+        outputs_alias = (
+            len(output_paths) == 2 and _paths_alias(output_paths[0], output_paths[1])
+        )
+    except (OSError, ValueError):
+        raise PrivateInputError(
+            'Resume generation input/output artifact identity could not be checked.'
+        ) from None
+    if aliases_input:
+        raise ExtractionConfigurationError(
+            'Resume generation outputs must not alias an input artifact.'
+        )
+    if outputs_alias:
+        raise ExtractionConfigurationError(
+            'Resume JSON and DOCX outputs must be distinct files.'
+        )
+
+
+def run_generate_resume(
+    plan_path: Path,
+    candidate_evidence_path: Path,
+    output_json_path: Path | None = None,
+    output_docx_path: Path | None = None,
+    *,
+    page_size: str = docx_renderer.DEFAULT_PAGE_SIZE,
+    strict_metrics: bool = False,
+) -> tuple[Path, Path, TailoredResumeArtifact]:
+    output_json_path = normalize_output_path(
+        PROJECT_ROOT,
+        output_json_path if output_json_path is not None else DEFAULT_RESUME_JSON_OUTPUT_PATH,
+    )
+    output_docx_path = normalize_output_path(
+        PROJECT_ROOT,
+        output_docx_path if output_docx_path is not None else DEFAULT_RESUME_DOCX_OUTPUT_PATH,
+    )
+    docx_renderer.resolve_page_size(page_size)
+    try:
+        plan_path = Path(os.path.abspath(os.fspath(plan_path)))
+        candidate_path = Path(os.path.abspath(os.fspath(candidate_evidence_path)))
+    except (TypeError, ValueError, OSError):
+        raise PrivateInputError(
+            'Resume generation input paths must be readable local file paths.'
+        ) from None
+
+    outputs = [output_json_path, output_docx_path]
+    protected_paths = [plan_path, candidate_path]
+    _reject_generation_aliases(outputs, protected_paths)
+
+    json_target = PrivateOutput(PROJECT_ROOT, output_json_path)
+    docx_target = PrivateOutput(PROJECT_ROOT, output_docx_path)
+    with json_target, docx_target:
+        plan = _load_section_plan_artifact(plan_path)
+
+        try:
+            snapshot, catalog, manifest, generation_id = _load_candidate_evidence_artifact(
+                candidate_path, include_publication=True,
+            )
+        except FileNotFoundError:
+            raise PrivateInputError(
+                'Candidate evidence artifact input file could not be found.'
+            ) from None
+
+        if manifest is not None:
+            bundle_key = publication_store.resolve_bundle_key(PROJECT_ROOT, candidate_path)
+            generation_dir = publication_store.generation_dir_path(
+                PROJECT_ROOT, bundle_key, generation_id
+            )
+            protected_paths.extend((
+                candidate_path,
+                generation_dir / 'catalog.json',
+                generation_dir / 'snapshot.json',
+            ))
+            _reject_generation_aliases(outputs, protected_paths)
+
+        client = AgentRouterClient(LLMConfig.from_env())
+        artifact = generate_tailored_resume(
+            plan, catalog, snapshot, manifest, client, strict_metrics=strict_metrics,
+        )
+
+        payload = artifact.model_dump_json(indent=2, warnings='error')
+        restored = TailoredResumeArtifact.model_validate_json(payload)
+        if restored != artifact:
+            raise AnalysisIntegrityError(
+                'Tailored resume JSON round-trip validation failed.'
+            )
+
+        docx_bytes = docx_renderer.render_docx_bytes(artifact, page_size=page_size)
+
+        # Recheck identities after generation/serialization, before publication.
+        _reject_generation_aliases(outputs, protected_paths)
+        json_target.ensure_current()
+        docx_target.ensure_current()
+        json_target.write_json(payload)
+        docx_target.write_bytes(docx_bytes)
+
+    _print_generation_summary(artifact, output_json_path, output_docx_path)
+    return output_json_path, output_docx_path, artifact
+
+
+def _print_generation_summary(artifact, output_json_path, output_docx_path) -> None:
+    # Aggregate counts and verification flags only; never candidate content.
+    report = artifact.validation
+    counts = {'error': 0, 'warning': 0}
+    for finding in report.findings:
+        counts[finding.severity] = counts.get(finding.severity, 0) + 1
+    print('Tailored resume generation summary')
+    print(f'  schema_version: {artifact.schema_version}')
+    print(f'  prompt_version: {artifact.prompt_version}')
+    print(f'  plan_schema_version: {artifact.plan_schema_version}')
+    print(f'  model: {artifact.model}')
+    print(f'  header_source_evidence_records: {len(artifact.header.source_evidence_ids)}')
+    print(f'  summary_sentences: {len(artifact.content.summary_sentences)}')
+    print(f'  skill_groups: {len(artifact.content.skill_groups)}')
+    print(f'  sections: {len(artifact.content.sections)}')
+    print(f'  traceability_verified: {str(report.traceability_verified).lower()}')
+    print(
+        f'  semantic_entailment_verified: '
+        f'{str(report.semantic_entailment_verified).lower()}'
+    )
+    print(f'  human_review_required: {str(report.human_review_required).lower()}')
+    print(f'  findings_error: {counts.get("error", 0)}')
+    print(f'  findings_warning: {counts.get("warning", 0)}')
+    print(f'  output_json: {output_json_path}')
+    print(f'  output_docx: {output_docx_path}')
+
+
 def _print_match_summary(match: CandidateJobMatch, output_path) -> None:
     # Aggregate counts, provenance, and limitation indicators only; never
     # candidate content or complete matching records.
@@ -646,6 +797,41 @@ def main(argv=None) -> int:
         default=str(DEFAULT_SECTION_PLAN_OUTPUT_PATH),
         help='Path for the generated resume section plan JSON artifact.',
     )
+    generate_parser = subparsers.add_parser(
+        'generate-resume',
+        help='Generate a validated, evidence-bound tailored resume JSON and DOCX.',
+    )
+    generate_parser.add_argument(
+        '--plan',
+        required=True,
+        help='Path to the validated schema-2.0.0 resume section plan JSON artifact.',
+    )
+    generate_parser.add_argument(
+        '--candidate-evidence',
+        required=True,
+        help='Path to the validated candidate evidence manifest or catalog JSON artifact.',
+    )
+    generate_parser.add_argument(
+        '--output-json',
+        default=str(DEFAULT_RESUME_JSON_OUTPUT_PATH),
+        help='Path for the validated tailored resume JSON artifact.',
+    )
+    generate_parser.add_argument(
+        '--output-docx',
+        default=str(DEFAULT_RESUME_DOCX_OUTPUT_PATH),
+        help='Path for the rendered tailored resume DOCX artifact.',
+    )
+    generate_parser.add_argument(
+        '--page-size',
+        default=docx_renderer.DEFAULT_PAGE_SIZE,
+        choices=sorted(docx_renderer.PAGE_SIZES),
+        help=f'DOCX page size (default: {docx_renderer.DEFAULT_PAGE_SIZE}).',
+    )
+    generate_parser.add_argument(
+        '--strict-metrics',
+        action='store_true',
+        help='Treat ungrounded numeric claims as hard failures.',
+    )
     args = parser.parse_args(argv)
     if args.command == 'extract-master':
         try:
@@ -783,6 +969,52 @@ def main(argv=None) -> int:
             return 3
         except Exception as error:  # noqa: BLE001
             print(f'error: section planning failed: {type(error).__name__}')
+            return 3
+        return 0
+    if args.command == 'generate-resume':
+        try:
+            run_generate_resume(
+                plan_path=Path(args.plan),
+                candidate_evidence_path=Path(args.candidate_evidence),
+                output_json_path=Path(args.output_json),
+                output_docx_path=Path(args.output_docx),
+                page_size=args.page_size,
+                strict_metrics=args.strict_metrics,
+            )
+        except UnicodeDecodeError:
+            print('error: input file is not valid UTF-8 text')
+            return 2
+        except (
+            PrivateOutputError,
+            ExtractionConfigurationError,
+            AnalysisIntegrityError,
+            ResumeGenerationError,
+            docx_renderer.DocxRenderError,
+            PrivateInputError,
+            CandidateJobMatchError,
+        ) as error:
+            print(f'error: {error}')
+            return 2
+        except PublicationError as error:
+            print(f'error: {error}')
+            return 2
+        except ValidationError:
+            print('error: artifact validation failed: validation error')
+            return 2
+        except PydanticSerializationError:
+            print('error: resume generation serialization failed')
+            return 2
+        except LLMUnexpectedError as error:
+            print(f'error: resume generation failed: {error.failure_type}')
+            return 3
+        except LLMClientError as error:
+            print(f'error: {error}')
+            return 2
+        except OSError:
+            print('error: resume generation failed: OSError')
+            return 3
+        except Exception as error:  # noqa: BLE001
+            print(f'error: resume generation failed: {type(error).__name__}')
             return 3
         return 0
     parser.print_help()
