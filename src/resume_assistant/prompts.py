@@ -122,7 +122,9 @@ Rules (mandatory):
   supplied evidence.
 - Evidence IDs in the bundle are short aliases such as E1, E2, E3. Cite ONLY those
   aliases. Never return a full SHA-256 identifier.
-- Entry IDs in the bundle are short aliases such as ENT1, ENT2. Return the exact alias.
+- Entry IDs in the bundle are short aliases such as ENT1, ENT2. Return the exact alias,
+  and emit at most ONE output entry per supplied entry_id (NEVER duplicate or split a
+  single entry_id into multiple output entries).
 - Copy section_id and heading_text exactly from the bundle. Keep the supplied section
   and entry order. Omit entries you cannot support.
 - Only include sections present in ordered_sections. Omit professional-summary and
@@ -160,7 +162,8 @@ Rules (mandatory):
     professional_summary_blueprint (NEVER cite SK... aliases in summary_sentences);
   - every bullet inside an entry MUST cite ONLY E... aliases listed in that specific
     entry's own selected_evidence_ids array (never aliases from any other entry);
-  - prioritized_skills items must cite their matched_evidence_ids;
+  - prioritized_skills items MUST cite their exact matched_evidence_ids from
+    prioritized_skills (never substitute unrelated E... aliases from other sections);
   - additional supporting skills in skill_groups may cite SK... aliases from
     technical_skills_evidence or E... aliases from ordered_sections whose
     original_content verbatim contains skill_text.
@@ -171,14 +174,31 @@ Rules (mandatory):
   matching E... evidence ID containing those exact dates is inside that entry's
   selected_evidence_ids (and cited if surfaced in bullets), and never emit dates
   absent from that entry's evidence. Use JSON null when absent.
-- For non-overlapping professional-experience and projects entries, write 2 to 4
-  substantive, past-tense, impact- and architecture-focused bullets grounded in the
-  entry's selected evidence. Prefer strong technical, engineering, delivery, and metric
-  bullets over present-tense fragments or administrative/onboarding filler.
+- For non-overlapping professional-experience and projects entries with grounded
+  achievement or engineering statements, write 2 to 4 substantive, past-tense,
+  impact- and architecture-focused bullets grounded in the entry's selected evidence.
+  Prefer strong technical, engineering, delivery, and metric bullets over present-tense
+  fragments or administrative/onboarding filler.
+- For metadata-only professional-experience timeline entries (entries whose
+  selected_evidence_ids contain only organization, role/title, location, dates, or
+  status metadata with no achievement or technical responsibility statements—such as
+  military service or career gap entries), populate "title", "organization", "dates",
+  and "location" cleanly and set "bullets": [] (NEVER invent filler bullets or
+  extrapolate responsibilities).
 - For education and certifications entries, populate "title", "organization", "dates",
   and "location" cleanly, and set "bullets": [] when those fields already convey the
   full record. Do NOT emit redundant 1-line bullets that merely restate the degree,
-  certification name, institution, issuer, or dates.
+  certification name, institution, issuer, or dates. When certifications provides
+  individual planned entry_ids (e.g., 6 entries), keep each entry_id as its own single
+  concise credential line ("title", "organization", "dates"/status, "bullets": [])
+  rather than cramming multiple credentials into one entry. Only if one single planned
+  entry_id itself groups multiple distinct certificates under one heading, keep that
+  entry_id once without duplicating entry_id.
+- When "languages" is present in ordered_sections, set "bullets": [], set
+  "organization", "dates", "location", "tech_stack", and "meta" to null, and format
+  "title" as a compact inline display string (e.g.,
+  "Arabic (Native) · English (Professional Working Proficiency)" or
+  "Language (Proficiency)" per entry) grounded strictly in the languages evidence.
 - Ground every sentence in the cited original_content. Do not invent percentages,
   currency amounts, durations, years, counts, or other numeric claims.
 - Never include or infer contact details (email, phone, URLs, addresses); the application

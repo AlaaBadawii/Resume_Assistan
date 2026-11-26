@@ -1117,3 +1117,165 @@ def test_stable_serialization_round_trip():
     plan = _plan(analysis, match, catalog)
     restored = TypeAdapter(ResumeSectionPlan).validate_json(plan.model_dump_json())
     assert restored == plan
+
+
+def test_projects_first_places_projects_before_experience_and_round_trips():
+    from resume_assistant.section_plan import build_plan_budgets
+
+    catalog = _catalog([
+        _evidence_record('ev-exp', EvidenceType.EXPERIENCE, 'Backend Engineer', section_reference='professional-experience-and-engineering-training', block_index=1),
+        _evidence_record('ev-proj', EvidenceType.PROJECT, 'RAG System', section_reference='independent-software-and-ai-projects', block_index=2),
+    ])
+    analysis = _analysis()
+    match = _match(analysis, catalog)
+    budgets = build_plan_budgets(projects_first=True)
+    planner = SectionPlanner(budgets=budgets)
+    plan = planner.plan(analysis, match, catalog)
+    order = [section.section_id for section in plan.ordered_sections]
+    assert order == ['projects', 'professional-experience']
+    restored = TypeAdapter(ResumeSectionPlan).validate_json(plan.model_dump_json())
+    assert planner.validate_result(restored, analysis, match, catalog) == plan
+
+
+def test_include_languages_plans_languages_when_present_and_omits_when_absent():
+    from resume_assistant.section_plan import build_plan_budgets
+
+    analysis = _analysis()
+    with_lang = _catalog([
+        _evidence_record('ev-exp', EvidenceType.EXPERIENCE, 'Role A', section_reference='professional-experience-and-engineering-training', block_index=1),
+        _evidence_record('ev-lang', EvidenceType.LANGUAGE, 'Arabic (Native)', section_reference='languages', block_index=2),
+    ])
+    without_lang = _catalog([
+        _evidence_record('ev-exp', EvidenceType.EXPERIENCE, 'Role A', section_reference='professional-experience-and-engineering-training', block_index=1),
+    ])
+    budgets = build_plan_budgets(include_languages=True)
+    planner = SectionPlanner(budgets=budgets)
+    plan_with = planner.plan(analysis, _match(analysis, with_lang), with_lang)
+    assert [section.section_id for section in plan_with.ordered_sections] == ['professional-experience', 'languages']
+    languages = plan_with.ordered_sections[-1]
+    assert languages.heading_text == 'Languages'
+    assert languages.selected_evidence_ids == ['ev-lang']
+    assert planner.validate_result(
+        TypeAdapter(ResumeSectionPlan).validate_json(plan_with.model_dump_json()),
+        analysis,
+        _match(analysis, with_lang),
+        with_lang,
+    ) == plan_with
+
+    plan_without = planner.plan(analysis, _match(analysis, without_lang), without_lang)
+    assert [section.section_id for section in plan_without.ordered_sections] == ['professional-experience']
+
+
+def test_build_plan_budgets_compact_1page_preset_and_explicit_overrides():
+    from resume_assistant.section_plan import build_plan_budgets
+
+    compact = build_plan_budgets(preset='compact-1page')
+    assert compact.max_projects == 3
+    assert compact.max_certifications == 6
+    assert compact.projects_first is True
+    assert compact.include_languages is True
+    assert compact.max_output_sections == 7
+    assert compact.section_caps()['projects'] == 3
+    assert compact.section_caps()['certifications'] == 6
+
+    overridden = build_plan_budgets(preset='compact-1page', max_projects=4, max_certifications=2)
+    assert overridden.max_projects == 4
+    assert overridden.max_certifications == 2
+    assert overridden.projects_first is True
+    assert overridden.include_languages is True
+
+
+def test_primary_projects_outrank_secondary_additional_and_archive_projects():
+    from resume_assistant.section_plan import build_plan_budgets
+
+    def heading_rec(eid, text, sec, block):
+        return _evidence_record(
+            eid, EvidenceType.PROJECT, text, section_reference=sec, block_index=block,
+        ).model_copy(update={'formatting': {'style': 'Heading 2'}})
+
+    catalog = _catalog([
+        heading_rec('sec-add-h', 'Additional Lab A', 'additional-ai-and-multimodal-applications', 1),
+        _evidence_record('sec-add-b', EvidenceType.PROJECT, 'Built with Python and FastAPI.', section_reference='additional-ai-and-multimodal-applications', block_index=2),
+        heading_rec('sec-arch-h', 'Archive Lab B', 'alx-software-engineering-project-archive', 3),
+        _evidence_record('sec-arch-b', EvidenceType.PROJECT, 'Built with Python and FastAPI.', section_reference='alx-software-engineering-project-archive', block_index=4),
+        heading_rec('prim-1-h', 'Flagship System One', 'independent-software-and-ai-projects', 5),
+        _evidence_record('prim-1-b', EvidenceType.PROJECT, 'Engineered distributed retrieval core.', section_reference='independent-software-and-ai-projects', block_index=6),
+        heading_rec('prim-2-h', 'Flagship System Two', 'independent-software-and-ai-projects', 7),
+        _evidence_record('prim-2-b', EvidenceType.PROJECT, 'Engineered async ingestion worker.', section_reference='independent-software-and-ai-projects', block_index=8),
+    ])
+    analysis = _stage_b_analysis(required=['Python', 'FastAPI'])
+    match = _match(analysis, catalog)
+
+    plan_2 = SectionPlanner(budgets=build_plan_budgets(max_projects=2)).plan(analysis, match, catalog)
+    proj_2 = next(s for s in plan_2.ordered_sections if s.section_id == 'projects')
+    assert [entry.entry_id for entry in proj_2.entries] == ['prim-1-h', 'prim-2-h']
+
+    plan_3 = SectionPlanner(budgets=build_plan_budgets(max_projects=3)).plan(analysis, match, catalog)
+    proj_3 = next(s for s in plan_3.ordered_sections if s.section_id == 'projects')
+    assert [entry.entry_id for entry in proj_3.entries] == ['sec-add-h', 'prim-1-h', 'prim-2-h']
+
+
+def test_certification_parent_program_diversity_caps_subcourses_and_promotes_distinct_providers():
+    from resume_assistant.section_plan import build_plan_budgets
+
+    def cert_heading(eid, text, block):
+        return _evidence_record(
+            eid, EvidenceType.CERTIFICATION, text,
+            section_reference='certifications-and-professional-development',
+            block_index=block,
+        ).model_copy(update={'formatting': {'style': 'Heading 2'}})
+
+    def cert_detail(eid, text, block):
+        return _evidence_record(
+            eid, EvidenceType.CERTIFICATION, text,
+            section_reference='certifications-and-professional-development',
+            block_index=block,
+        )
+
+    catalog = _catalog([
+        cert_heading('parent-h', 'Cloud Backend Professional Certificate', 1),
+        cert_detail('parent-b', 'Issuer: Provider One | Completed 2024', 2),
+        cert_heading('sub1-h', 'Course One Foundations', 3),
+        cert_detail('sub1-b', 'Program: Cloud Backend Professional Certificate (Course 1)', 4),
+        cert_heading('sub2-h', 'Course Two APIs with Python', 5),
+        cert_detail('sub2-b', 'Program: Cloud Backend Professional Certificate (Course 2)', 6),
+        cert_heading('sub3-h', 'Course Three Databases', 7),
+        cert_detail('sub3-b', 'Program: Cloud Backend Professional Certificate (Course 3)', 8),
+        cert_heading('dist1-h', 'Distinct Credential Alpha', 9),
+        cert_detail('dist1-b', 'Issuer: Provider Two | 2025', 10),
+        cert_heading('dist2-h', 'Distinct Credential Beta', 11),
+        cert_detail('dist2-b', 'Issuer: Provider Three | 2025', 12),
+    ])
+    analysis = _stage_b_analysis(required=['Python'])
+    match = _match(analysis, catalog)
+    planner = SectionPlanner(budgets=build_plan_budgets(max_certifications=4))
+    plan = planner.plan(analysis, match, catalog)
+    certs = next(s for s in plan.ordered_sections if s.section_id == 'certifications')
+    assert [entry.entry_id for entry in certs.entries] == [
+        'parent-h', 'sub2-h', 'dist1-h', 'dist2-h',
+    ]
+    assert planner.validate_result(
+        TypeAdapter(ResumeSectionPlan).validate_json(plan.model_dump_json()),
+        analysis,
+        match,
+        catalog,
+    ) == plan
+
+    no_parent_catalog = _catalog([
+        cert_heading('orphan1-h', 'Orphan Course 1', 1),
+        cert_detail('orphan1-b', 'Program: Orphan Track (Course 1)', 2),
+        cert_heading('orphan2-h', 'Orphan Course 2', 3),
+        cert_detail('orphan2-b', 'Program: Orphan Track (Course 2)', 4),
+        cert_heading('orphan3-h', 'Orphan Course 3', 5),
+        cert_detail('orphan3-b', 'Program: Orphan Track (Course 3)', 6),
+        cert_heading('other1-h', 'Standalone Credential', 7),
+        cert_detail('other1-b', 'Issuer: Provider Four | 2025', 8),
+    ])
+    no_parent_match = _match(analysis, no_parent_catalog)
+    no_parent_plan = SectionPlanner(budgets=build_plan_budgets(max_certifications=4)).plan(
+        analysis, no_parent_match, no_parent_catalog,
+    )
+    no_parent_certs = next(s for s in no_parent_plan.ordered_sections if s.section_id == 'certifications')
+    assert [entry.entry_id for entry in no_parent_certs.entries] == [
+        'orphan1-h', 'orphan2-h', 'other1-h',
+    ]

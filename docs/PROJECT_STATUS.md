@@ -5,7 +5,7 @@ Google Antigravity) and human reviewers. Update this file at the end of every
 mission. **This is a navigation aid — always verify claims against source
 code (see `AGENTS.md` §A).**
 
-Last updated: 2026-11-26 (Stages A–E APPROVED and Mission 3.3 APPROVED at owner closeout 2026-11-25; Phase 4 core evidence-bound JSON/DOCX/PDF generation is APPROVED by explicit owner authorization (2026-11-26), including pre-live-test hardening, multi-provider transport (`responses`, `chat_completions`, `gemini`), Phase 4.1–4.3 executive layout & prompt polish (`v1.5.0`, dense ATS `SK...` skill aliasing, metric preservation, headline seniority & date-evidence guardrails, compact header URL display with preserved external hyperlinks), `--output-pdf` via headless LibreOffice (`libreoffice-writer`), and live Stage 1–5 `v1.5.0` PDF-only verification (`gemini-3.5-flash-lite`, `traceability_verified: True`, 0 errors / 1 `ungrounded_metric` warning); latest authorized synthetic regression 1,502 collected / 1,495 selected / 1,494 passed / 1 skipped (optional `weasyprint` preview test) / 7 documented private-source exclusions / 11 existing warnings; parent Mission 3 remains in progress; historical approvals and accepted limitations are preserved).
+Last updated: 2026-11-27 (Stages A–E APPROVED and Mission 3.3 APPROVED at owner closeout 2026-11-25; Phase 4 core evidence-bound JSON/DOCX/PDF generation is APPROVED by explicit owner authorization (2026-11-26); Phase 4.4 compact 1-page budgets, primary-project tiering, certification parent-program diversity, inline `languages`, metadata-only experience support, non-wrapping `Education` dates, and 1-page A4 PDF layout are `IMPLEMENTED — AWAITING REVIEW` (§P), verified by live Stage 4–5 execution (`gemini-3.5-flash-lite`, `traceability_verified: True`, 0 errors / 1 `ungrounded_metric` warning, `42,467`-byte 1-page A4 `%PDF-`) and full authorized regression **1,513 collected / 7 deselected / 1,506 selected / 1,505 passed / 1 skipped (optional `weasyprint` preview test) / 0 failed / 11 existing warnings**; historical approvals and accepted limitations are preserved).
 
 ---
 
@@ -119,6 +119,7 @@ mission `APPROVED`; none of the approvals below are fabricated.**
 | 3.3 — Stage D | Strict output integrity, source-aware result validation, compact provenance, and evidence-bound blueprint (D-01 through D-04) | `APPROVED` | Output contract schema **2.0.0** has mandatory complete provenance and factual bindings; source-aware `SectionPlanner.validate_result` runs before private publication. Strict types, unambiguous JSON, section/entry/selection/accounting/budget relationships, supported component/parent associations, and blueprint projections are validated. Compact source coordinates/cell provenance and extraction generation hashes are retained without duplicating the resume body. Explicit schema-1 inspection plus validated-source re-planning preserves intentional historical compatibility. Pre-approval results are preserved in §M: 110 new cases; prior planner/CLI/Stage C 308 passed; publication/matcher 220 passed; safeguards 70 passed; all 14 external schema/provenance challenges passed; full external suite 72 passed / 4 accepted assertion failures; authorized regression **1,320 collected, 1,313 passed, 7 documented exclusions, 0 failed, 11 existing warnings**. Independent Stage D review verdict: **APPROVE WITH NON-BLOCKING OBSERVATIONS**; 418 focused cases and six independent source/compatibility challenges passed, with no new external failure class. Approval is recorded under the owner's explicit conditional authorization in the Stage D independent review + Stage E assignment. Existing lexical-support, unavailable-coordinate/generation, unmarked-entry and legacy-inspection observations are preserved. Stage E was authorized and is now APPROVED; Mission 3.3 is APPROVED at the owner closeout (2026-11-25). |
 | 3.3 — Stage E | Managed end-to-end integration, portable acceptance, contract compatibility, operational documentation and final verification (E-01 through E-05) | `APPROVED` | Conditional Stage D review passed and owner-authorized approval was recorded before Stage E work. Real four-command synthetic DOCX/JD workflow now has 23 managed integration cases with Responses-envelope/analyzer validation through an offline transport, plus the portable 76-case independent acceptance matrix. The matching CLI protects consumed generation catalog/snapshot aliases before matching and immediately before publication, preserving existing errors and schemas. README and extraction/analysis/matching/planning docs describe the actual workflow and Phase 4 boundary. All 99 added cases pass; prior planner/CLI/A–D 418 pass; publication/matcher 220 pass; safeguards 70 pass. Final authorized regression: **1,419 collected, 1,412 passed, 7 documented private-source cases deselected, 0 failed, 11 existing warnings**. Stage E is APPROVED and Mission 3.3 is APPROVED at the owner closeout (2026-11-25); Phase 4 had not begun at that closeout. |
 | 4 — core vertical slice | Evidence-bound tailored-resume JSON, ATS-safe single-column DOCX, and optional LibreOffice-converted PDF generation from a schema-2 plan plus committed candidate evidence | `APPROVED` | Adds strict generation schema 1.0.0, deterministic local header, selected-only provider input (plus non-PII `technical-skills` catalog records with distinct `SK1..SKn` aliases for `skill_groups`), hard evidence-scope/order/heading validation, numeric-grounding warnings with optional strict failure, `generate-resume` CLI (JSON + `--output-docx` and/or `--output-pdf`, mode 0600), multi-provider `llm_client` (`responses`, `chat_completions`, `gemini`), and 48 offline generation tests (plus 176 tests in `test_llm_client.py`). `--output-pdf` converts rendered DOCX via headless LibreOffice (`soffice`/`libreoffice` from optional `libreoffice-writer`, 60s timeout) with zero new Python dependencies and enforces the `data/private/processed/` output boundary. Header extraction covers header-relevant records (`professional-identity`, `CONTACT`, `IDENTITY`, preamble/unclassified) plus snapshot headers/footers while blocking non-header section hyperlinks, deduplicates `mailto:`, strips verbose prefixes, and renders a 2-line contact header with compact URL display text and preserved `https://` hyperlink targets. Phase 4.3 executive single-column DOCX/PDF layout uses `0.45 in` top/bottom and `0.5 in` left/right margins, `9.5pt` body, `10pt` uppercase headings with bottom borders (`w:pBdr`), inline `Category: Skill 1 · Skill 2` skill groups, right-aligned tab-stop dates, and no `tech_stack` header dumps. Prompt v1.5.0 specifies dense ATS skills (`35–55` keywords), quantified metric preservation, headline seniority grounding, date-evidence grounding (`selected_evidence_ids`), and overlap condensation, with non-PII `repair_guidance` in retries. Live Stage 1–5 `v1.5.0` PDF-only verification (`gemini-3.5-flash-lite`, prior to final headline-seniority/date-evidence text tweak) exited `0`: `traceability_verified: True`, 0 errors, 1 `ungrounded_metric` warning at `sections[3].entries[2].dates`, 43,994-byte 2-page `%PDF-`, 33 skills across 4 categories, and metrics `85%`/`130/130`/`87.9%`/`40+` preserved. Full authorized regression: **1,502 collected, 1,495 selected, 1,494 passed, 1 skipped (optional `weasyprint` preview test), 7 documented private-source exclusions, 0 failed, 11 existing warnings**. Explicitly approved by the project owner (2026-11-26); template-filling generation remains future work (§O). |
+| 4.4 — compact 1-page budgets & ranking | Configurable section planning budgets, `--preset compact-1page`, primary-project tiering, certification parent-program diversity, inline `languages`, metadata-only experience support, non-wrapping `Education` date lines, and 1-page A4 PDF rendering | `IMPLEMENTED — AWAITING REVIEW` | Backward-compatible `plan-sections` flags (`--max-projects`, `--max-certifications`, `--projects-first`, `--include-languages`, `--preset compact-1page`), `@model_serializer` on `PlanBudgets` omitting default extension fields for legacy compatibility, primary-vs-secondary (`additional`/`archive`) project tiering, certification parent-program diversity capping (`<= 1` sub-course when parent selected, `<= 2` total per program), single inline `languages` section rendering (`bullets: []`), metadata-only `professional-experience` timeline support (`bullets: []`), compact non-wrapping `Education` date lines, deduplicated `SK...` catalog + alias-only repair hints in `resume_generator.py`, and compact executive 1-page DOCX/PDF layout (`0.38 in` top/bottom margins, `9.0pt` body/bullets, `1.05`–`1.06` line spacing). Live Stage 4–5 `compact-1page` A4 run (`gemini-3.5-flash-lite`, `v1.5.0`) exited `0`: 3 flagship projects (`[4, 4, 3]` bullets), 3 experience entries (`[3, 0, 2]` bullets), 1 education, 6 certifications, 1 languages line, 36 skill items, `traceability_verified: True` (0 errors / 1 `ungrounded_metric` warning at `summary_sentences[1]`), metrics `85%`/`130/130`/`87.9%`/`40+` preserved, and `42,467`-byte **1-page** A4 `%PDF-`. Focused tests (`test_section_planner.py` + `test_resume_generation.py`): **168 passed** (`116` + `52`); full authorized regression: **1,513 collected / 7 deselected / 1,506 selected / 1,505 passed / 1 skipped / 0 failed / 11 warnings** (§P). |
 
 ---
 
@@ -139,7 +140,7 @@ approval/rejection states and their provenance have not been rewritten.
 | Section detector | `src/resume_assistant/section_detector.py` | Heuristic top-level section detection (bold/size/numbering signals); 14 sections detected on the Master Resume. |
 | Evidence builder | `src/resume_assistant/evidence.py` | Maps blocks → `EvidenceRecord`s with deterministic SHA-256 IDs and provenance; builds `CandidateEvidenceCatalog`. **Known defects — see §D.** |
 | Data models | `src/resume_assistant/models.py` | Schema 3.0.0 retained; optional located gaps, detailed completeness diagnostics, block locations, and header/footer part/reference metadata; existing fields and completeness formulas preserved. |
-| CLI | `src/resume_assistant/cli.py`, `__main__.py` | `extract-master`, `analyze-job`, offline `match-job`, `plan-sections`, and `generate-resume`; validated private artifacts, consumed-input alias protection, aggregate-only summaries. |
+| CLI | `src/resume_assistant/cli.py`, `__main__.py` | `extract-master`, `analyze-job`, offline `match-job`, `plan-sections` (with optional Phase 4.4 `--max-projects`, `--max-certifications`, `--projects-first`, `--include-languages`, `--preset compact-1page`), and `generate-resume`; validated private artifacts, consumed-input alias protection, aggregate-only summaries. |
 | LLM client | `src/resume_assistant/llm_client.py` | Multi-provider stdlib HTTP client (`responses`, `chat_completions`, `gemini`) with structural URL/finite-timeout validation, rejected redirects, strict envelope validation, refusal/block rejection, and sanitized errors (`x-goog-api-key` header for Gemini, Bearer auth for Responses/Chat Completions). HTTP is limited to numeric loopback endpoints. |
 | Job analysis models & prompt | `src/resume_assistant/job_models.py`, `src/resume_assistant/prompts.py` | Strict `JobDescriptionPayload` / `JobDescriptionAnalysis`, schema/prompt 2.0.0: cited scalars and source phrases, exact classification context, explicit uncertain skills, identical-item deduplication, conflict rejection, and application-owned AI-unverified metadata. |
 | Job analyzer | `src/resume_assistant/job_analyzer.py` | Strict JSON parse → Pydantic required-key/own-evidence validation → check every quotation/context against the original JD → canonical artifact. Textual checks are not semantic entailment or complete extraction; no candidate data is injected. |
@@ -148,11 +149,11 @@ approval/rejection states and their provenance have not been rewritten.
 | Artifact input reader | `src/resume_assistant/private_input.py` | Shared pinned no-follow regular-file byte capture for DOCX and matching artifacts; immutable source filename/bytes/digest; traversal/symlink/change rejection and sanitized input errors. |
 | Structural coverage | `src/resume_assistant/document_coverage.py` | Parsed-document-only inventory: actual default/first/even relationships, linked ownership, unique part URIs, located unsupported inline/table/part diagnostics, conservative unavailable inventory state. |
 | Preview renderer | `tests/render_template_pdf.py` | Approximate WeasyPrint preview; reads page size/margins from the DOCX; writes `output/resume_template_preview.pdf`. Not Word-faithful. |
-| Resume planning/output contract | `section_planner.py`, `section_plan.py`, `legacy_section_plan.py` | Approved deterministic selection and schema-2 strict/source-aware output, compact provenance, evidence-bound blueprint, explicit legacy inspection/re-planning. |
-| Generation models & prompt | `generation_models.py`, `prompts.py` | Strict generation schema 1.0.0 payload/artifact/report models and the Phase 4 (`v1.5.0`) prompt contract. |
-| Resume generator | `resume_generator.py` | Source/provenance re-verification, deterministic local header, selected-only provider input (`E...` + `SK1..SKn` skill catalog aliases), strict payload parsing, hard evidence-scope/order/heading checks, non-PII `repair_guidance`, and numeric-grounding warnings/strict mode. Never claims semantic entailment. |
-| DOCX & PDF renderer | `docx_renderer.py` | Compact executive single-column DOCX bytes from the validated artifact (`0.45 in`/`0.5 in` margins, `9.5pt` body, `10pt` uppercase headings with `w:pBdr`, no tables/images/header/footer content, 2-line contact header, inline `Category: Skill 1 · Skill 2` groups, right-aligned tab-stop dates, compact Education/Certifications, A4/Letter page sizes) plus `render_resume_pdf` via optional headless LibreOffice (`libreoffice-writer`, mode `0600`). |
-| Test suite | `tests/` + `fixtures/` | Latest authorized Stage E result: **1,419 collected / 1,412 passed / 7 private-source exclusions / 0 failed / 11 existing warnings**; preserved prior cases and 99 new end-to-end/independent acceptance cases. Multi-provider `llm_client` adds **35** cases (`176` in `test_llm_client.py`) and Phase 4 adds **48** offline generation/PDF cases (`tests/test_resume_generation.py`); combined run **1,502 collected / 1,495 selected / 1,494 passed / 1 skipped (optional `weasyprint` preview test) / 7 exclusions / 11 warnings**. |
+| Resume planning/output contract | `section_planner.py`, `section_plan.py`, `legacy_section_plan.py` | Approved deterministic selection and schema-2 strict/source-aware output, compact provenance, evidence-bound blueprint, explicit legacy inspection/re-planning, plus Phase 4.4 configurable budgets/`--preset compact-1page`, `languages` opt-in, primary-project tiering, and certification parent-program diversity. |
+| Generation models & prompt | `generation_models.py`, `prompts.py` | Strict generation schema 1.0.0 payload/artifact/report models and the Phase 4 (`v1.5.0`) prompt contract (including inline `languages`, individual `certifications`, and metadata-only timeline `bullets: []` rules). |
+| Resume generator | `resume_generator.py` | Source/provenance re-verification, deterministic local header, selected-only provider input (`E...` + deduplicated `SK1..SKn` skill catalog aliases), strict payload parsing, hard evidence-scope/order/heading checks, grounded catalog fallback for planned skills, alias-only repair hints, post-validation `languages` bullet folding, and numeric-grounding warnings/strict mode. Never claims semantic entailment. |
+| DOCX & PDF renderer | `docx_renderer.py` | Compact 1-page executive single-column DOCX bytes (`0.38 in` top/bottom / `0.5 in` left/right margins, `9.0pt` body/bullets, `1.05`–`1.06` line spacing, `9.5pt` uppercase headings with `w:pBdr`, no tables/images/header/footer content, 2-line contact header, inline `Category: Skill 1 · Skill 2` groups, inline `LANGUAGES` line, non-wrapping month-abbreviated/font-fitted `Education` dates, right-aligned tab-stop dates, compact Education/Certifications, A4/Letter page sizes) plus `render_resume_pdf` via optional headless LibreOffice (`libreoffice-writer`, mode `0600`). |
+| Test suite | `tests/` + `fixtures/` | Latest authorized Stage E result: **1,419 collected / 1,412 passed / 7 private-source exclusions / 0 failed / 11 existing warnings**; Phase 4 + 4.4 add `test_llm_client.py` (`176`), `tests/test_resume_generation.py` (`52`), and new `tests/test_section_planner.py` (`116`) + `tests/test_planner_cli.py` (`134`) cases; latest combined run **1,513 collected / 7 deselected / 1,506 selected / 1,505 passed / 1 skipped (optional `weasyprint` preview test) / 0 failed / 11 warnings**. |
 | Engineering instructions | `AGENTS.md` | Shared agent rules (onboarding, env, privacy, standards, missions, Git). |
 | Design/operations docs | `README.md`, `docs/template_design.md`, `docs/extraction.md`, `docs/job_analysis.md`, `docs/matching.md`, `docs/planning.md` | Owner workflow, artifact roles/versions, private use, inspection/migration, implemented limitations and later Phase 4 boundary. |
 
@@ -260,6 +261,34 @@ against source during Mission 1.3 inspection.)
 ---
 
 ## E. Current Stopping Point
+
+- **Phase 4.4 (`IMPLEMENTED — AWAITING REVIEW`, 2026-11-27)** extends
+  section planning and compact PDF rendering while preserving **Phase 4 core
+  (`APPROVED`, 2026-11-26)** and all Stages A–E invariants (§P):
+  - `plan-sections` adds `--max-projects`, `--max-certifications`,
+    `--projects-first`, `--include-languages`, and `--preset compact-1page`
+    (`max_projects=3`, `max_certifications=6`, `projects_first=True`,
+    `include_languages=True`, `max_output_sections=7`), keeping defaults
+    backward-compatible via `@model_serializer` on `PlanBudgets`.
+  - `section_planner.py` adds generic primary-vs-secondary (`additional` /
+    `archive`) project tiering and certification parent-program diversity
+    capping (`<= 1` sub-course when parent selected, `<= 2` total per program).
+  - `prompts.py`, `resume_generator.py`, and `docx_renderer.py` add inline
+    `languages` rendering (`bullets: []`), metadata-only timeline experience
+    (`bullets: []`), non-wrapping month-abbreviated/font-fitted `Education`
+    dates, deduplicated `SK...` catalog + grounded catalog fallback + alias-only
+    repair hints, and compact 1-page A4 spacing (`0.38 in` top/bottom margins,
+    `9.0pt` body/bullets, `1.05`–`1.06` line spacing).
+  - Live `first_live_run` (`compact-1page`, A4, `gemini-3.5-flash-lite`,
+    `v1.5.0`): `traceability_verified: True` (0 errors / 1 `ungrounded_metric`
+    warning at `summary_sentences[1]`), 3 flagship projects (`[4, 4, 3]` bullets),
+    3 experience entries (`[3, 0, 2]` bullets), 1 education, 6 certifications,
+    1 languages line, 36 skills, metrics `85%`/`130/130`/`87.9%`/`40+` preserved,
+    and `42,467`-byte **1-page** `%PDF-`.
+  - Focused tests (`test_section_planner.py` + `test_resume_generation.py`):
+    **168 passed**; full authorized regression: **1,513 collected / 7 deselected /
+    1,506 selected / 1,505 passed / 1 skipped (optional `weasyprint` preview
+    test) / 0 failed / 11 existing warnings**.
 
 - **Phase 4 core vertical slice is `APPROVED` (2026-11-26).**
   `generate-resume` produces a validated, evidence-bound tailored-resume JSON
@@ -1460,3 +1489,80 @@ headless LibreOffice (`libreoffice-writer`).
 - Private Master Resume and generated outputs remain strictly untracked under
   `data/private/`. Phase 4 is recorded `APPROVED` by explicit owner
   authorization (2026-11-26).
+
+---
+
+## P. Phase 4.4 — Compact 1-Page Budgets, Flagship Ranking, & 1-Page A4 Fit (`IMPLEMENTED — AWAITING REVIEW`)
+
+### Scope & Behavior
+
+- **Configurable Planning Budgets (`section_plan.py`, `section_planner.py`, `cli.py`):**
+  - `PlanBudgets` adds `max_languages` (default `5`), `projects_first` (default
+    `False`), and `include_languages` (default `False`), plus `build_plan_budgets`
+    and `COMPACT_1PAGE_PRESET`. A `@model_serializer(mode='wrap')` omits default
+    extension values so existing schema-2 plans and `LegacyBudgets` round-trips
+    remain unchanged.
+  - `plan-sections` exposes `--max-projects`, `--max-certifications`,
+    `--projects-first`, `--include-languages`, and `--preset compact-1page`
+    (`max_projects=3`, `max_certifications=6`, `projects_first=True`,
+    `include_languages=True`, `max_output_sections=7`, overridable by explicit
+    flags).
+- **Generic Deterministic Ranking (`section_planner.py`):**
+  - `projects` prefers primary independent projects over secondary
+    `additional`/`archive`/`minor`/`secondary`/`other` source sections so
+    flagship engineering projects are not displaced by minor learning labs
+    unless needed to fill `max_projects`.
+  - `certifications` links sub-course entries (`Program: <Parent> (Course N)`)
+    to parent program certificates by normalized title, capping sub-courses to
+    at most `1` when the parent certificate is selected (or at most `2` total
+    entries sharing a parent program) so remaining slots highlight distinct
+    credentials across providers.
+- **Validation, Prompts, & 1-Page Rendering (`prompts.py`, `resume_generator.py`, `docx_renderer.py`):**
+  - Prompt `v1.5.0` explicitly supports metadata-only `professional-experience`
+    timeline entries (`bullets: []`), individual single-line `certifications`
+    credentials (`bullets: []`), unique single-use `entry_id`s, and compact
+    inline `languages` (`bullets: []`).
+  - `_build_llm_input` deduplicates redundant `SK...` catalog entries while
+    keeping all selected `E...` records; `validate_tailored_resume` permits
+    verbatim-grounded `SK...` catalog fallback for planned skills while still
+    rejecting ungrounded/unrelated IDs; `_validation_repair_details` supplies
+    alias-only repair hints (`matched_evidence_ids`, `ENT...` scope, plan
+    section order); `_normalize_language_sections` folds grounded `languages`
+    bullets post-validation and re-validates.
+  - `docx_renderer.py` renders `LANGUAGES` as a single `Resume Body` inline line
+    (`·`-separated), abbreviates full month names and tightens run font size
+    when single-line `Education`/compact headers + right-aligned date spans
+    exceed printable width, and tightens executive spacing (`0.38 in`
+    top/bottom margins, `9.0pt` body/bullets, `1.05`–`1.06` line spacing) with
+    0 layout tables.
+
+### Verification
+
+- **Offline Unit Tests:** `tests/test_section_planner.py` (**116 passed**,
+  including `--preset compact-1page` / overrides, `--projects-first`,
+  `--include-languages`, primary-vs-secondary project tiering, and
+  certification parent-program diversity), `tests/test_planner_cli.py` (**134
+  passed**), and `tests/test_resume_generation.py` (**52 passed**, including
+  inline `languages` rendering, non-wrapping `Education` dates, `SK...`
+  catalog fallback + alias-only repair hints, and metadata-only `bullets: []`
+  experience entries). Focused planner + generation run: **168 passed**.
+- **Full Authorized Regression:** **1,513 collected / 7 deselected / 1,506
+  selected / 1,505 passed / 1 skipped (optional `weasyprint` preview test) /
+  0 failed / 11 existing warnings** (preserving the 7 documented
+  private-Master-Resume exclusions).
+- **Live Stages 4 & 5 Verification (`first_live_run`, owner-authorized, SHA prefix `67798551`):**
+  - `plan-sections --preset compact-1page`: `selected_evidence_records: 397`,
+    `planned_sections: 7` (`projects`: 3 primary entries `[108, 82, 38]` from
+    `independent-software-and-ai-projects`, `professional-experience`: 3,
+    `education`: 1, `certifications`: 6 diverse entries `[34, 10, 4, 4, 4, 3]`,
+    `languages`: 1).
+  - `generate-resume --page-size A4` (`model: gemini-3.5-flash-lite`,
+    `prompt_version: 1.5.0`): `traceability_verified: True`, 0 errors / 1
+    `ungrounded_metric` warning (`summary_sentences[1]`), 38-word summary, 4
+    `skill_groups` (36 skill items), `projects` bullets `[4, 4, 3]`,
+    `professional-experience` bullets `[3, 0, 2]`, `education` `[0]`,
+    `certifications` `[0, 0, 0, 0, 0, 0]`, `languages` `[0]`, metrics
+    `85%`/`130/130`/`87.9%`/`40+` preserved, and `42,467`-byte **1-page** A4
+    `%PDF-`.
+- `pip check`, `git diff --check`, and `git check-ignore -v .env data/private`
+  pass. No Python runtime dependencies were added.

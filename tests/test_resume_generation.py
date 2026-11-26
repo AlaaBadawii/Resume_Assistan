@@ -1726,8 +1726,8 @@ def test_docx_executive_layout_inline_skills_right_tab_dates_and_no_tech_stack_d
     document = docx_renderer.build_document(artifact)
     assert len(document.tables) == 0
     sec = document.sections[0]
-    assert sec.top_margin == Inches(0.45)
-    assert sec.bottom_margin == Inches(0.45)
+    assert abs(sec.top_margin - Inches(0.38)) <= 635
+    assert abs(sec.bottom_margin - Inches(0.38)) <= 635
     assert sec.left_margin == Inches(0.5)
     assert sec.right_margin == Inches(0.5)
 
@@ -1765,3 +1765,328 @@ def test_generation_prompt_v15_specifies_dense_skills_metrics_and_overlap_rules(
     for tier in ('Mid-Level', 'Senior', 'Staff', 'Principal', 'Architect'):
         assert tier in RESUME_GENERATION_INSTRUCTIONS
     assert 'selected_evidence_ids' in RESUME_GENERATION_INSTRUCTIONS
+    assert '"languages"' in RESUME_GENERATION_INSTRUCTIONS
+    assert 'metadata-only professional-experience timeline entries' in RESUME_GENERATION_INSTRUCTIONS
+
+
+def test_languages_section_renders_as_single_compact_inline_line_and_strips_bullets():
+    from resume_assistant.generation_models import (
+        DeterministicHeader,
+        GroundingValidationReport,
+        TailoredResumeArtifact,
+        TailoredResumePayload,
+    )
+    from resume_assistant.resume_generator import _normalize_language_sections
+
+    payload = TailoredResumePayload.model_validate({
+        'headline_title': 'Software Engineer',
+        'tagline': None,
+        'summary_sentences': [],
+        'skill_groups': [],
+        'sections': [
+            {
+                'section_id': 'languages',
+                'heading_text': 'Languages',
+                'entries': [
+                    {
+                        'entry_id': 'lang-1',
+                        'title': 'Languages',
+                        'organization': None,
+                        'dates': None,
+                        'location': None,
+                        'tech_stack': None,
+                        'meta': None,
+                        'bullets': [
+                            {'text': 'Arabic (Native)', 'evidence_ids': ['e1']},
+                            {'text': 'English (Professional Working Proficiency)', 'evidence_ids': ['e2']},
+                        ],
+                    },
+                ],
+            },
+        ],
+    })
+    normalized = _normalize_language_sections(payload)
+    assert normalized.sections[0].entries[0].bullets == []
+    assert normalized.sections[0].entries[0].title == 'Arabic (Native) · English (Professional Working Proficiency)'
+
+    multi_entry_payload = TailoredResumePayload.model_validate({
+        'headline_title': 'Software Engineer',
+        'tagline': None,
+        'summary_sentences': [],
+        'skill_groups': [],
+        'sections': [
+            {
+                'section_id': 'languages',
+                'heading_text': 'Languages',
+                'entries': [
+                    {
+                        'entry_id': 'lang-1',
+                        'title': 'Arabic',
+                        'organization': None,
+                        'dates': None,
+                        'location': None,
+                        'tech_stack': None,
+                        'meta': 'Native',
+                        'bullets': [],
+                    },
+                    {
+                        'entry_id': 'lang-2',
+                        'title': 'English (Professional Working Proficiency)',
+                        'organization': None,
+                        'dates': None,
+                        'location': None,
+                        'tech_stack': None,
+                        'meta': None,
+                        'bullets': [],
+                    },
+                ],
+            },
+        ],
+    })
+    artifact = TailoredResumeArtifact(
+        prompt_version=RESUME_GENERATION_PROMPT_VERSION,
+        plan_schema_version='2.0.0',
+        model='synthetic-generation-model',
+        header=DeterministicHeader(full_name='Ada Lovelace', contact_lines=[]),
+        content=multi_entry_payload,
+        validation=GroundingValidationReport(traceability_verified=True, findings=[]),
+    )
+    document = docx_renderer.build_document(artifact)
+    lang_heading_idx = next(
+        idx for idx, p in enumerate(document.paragraphs) if p.text == 'LANGUAGES'
+    )
+    body_paragraphs = document.paragraphs[lang_heading_idx + 1:]
+    assert len(body_paragraphs) == 1
+    assert body_paragraphs[0].style.name == 'Resume Body'
+    assert body_paragraphs[0].text == 'Arabic (Native) · English (Professional Working Proficiency)'
+
+
+def test_education_long_header_abbreviates_months_and_tightens_font_to_avoid_date_wrapping():
+    from docx.shared import Pt
+    from resume_assistant.generation_models import (
+        DeterministicHeader,
+        GroundingValidationReport,
+        TailoredResumeArtifact,
+        TailoredResumePayload,
+    )
+
+    payload = TailoredResumePayload.model_validate({
+        'headline_title': 'Software Engineer',
+        'tagline': None,
+        'summary_sentences': [],
+        'skill_groups': [],
+        'sections': [
+            {
+                'section_id': 'education',
+                'heading_text': 'Education',
+                'entries': [
+                    {
+                        'entry_id': 'edu-long',
+                        'title': 'Bachelor of Science in Management Information Systems',
+                        'organization': 'Modern Academy',
+                        'dates': 'October 2019 – July 2023',
+                        'location': None,
+                        'tech_stack': None,
+                        'meta': None,
+                        'bullets': [],
+                    },
+                    {
+                        'entry_id': 'edu-extra-long',
+                        'title': 'Bachelor of Science in Management Information Systems',
+                        'organization': 'Modern Academy',
+                        'dates': 'October 2019 – July 2023',
+                        'location': 'Cairo, Egypt',
+                        'tech_stack': None,
+                        'meta': None,
+                        'bullets': [],
+                    },
+                    {
+                        'entry_id': 'edu-short',
+                        'title': 'MSc Computer Science',
+                        'organization': 'State University',
+                        'dates': 'January 2024 – May 2025',
+                        'location': None,
+                        'tech_stack': None,
+                        'meta': None,
+                        'bullets': [],
+                    },
+                ],
+            },
+        ],
+    })
+    artifact = TailoredResumeArtifact(
+        prompt_version=RESUME_GENERATION_PROMPT_VERSION,
+        plan_schema_version='2.0.0',
+        model='synthetic-generation-model',
+        header=DeterministicHeader(full_name='Ada Lovelace', contact_lines=[]),
+        content=payload,
+        validation=GroundingValidationReport(traceability_verified=True, findings=[]),
+    )
+    document = docx_renderer.build_document(artifact, page_size='A4')
+    edu_paragraphs = [
+        p for p in document.paragraphs if p.style.name == 'Resume Subheading'
+    ]
+    assert len(edu_paragraphs) == 3
+    assert edu_paragraphs[0].text == (
+        'Bachelor of Science in Management Information Systems — Modern Academy\tOct 2019 – Jul 2023'
+    )
+    assert edu_paragraphs[1].text == (
+        'Bachelor of Science in Management Information Systems — Modern Academy | Cairo, Egypt\tOct 2019 – Jul 2023'
+    )
+    assert edu_paragraphs[1].runs[0].font.size in (Pt(8.5), Pt(8))
+    assert edu_paragraphs[1].runs[1].font.size in (Pt(8.5), Pt(8))
+    assert edu_paragraphs[2].text == 'MSc Computer Science — State University\tJanuary 2024 – May 2025'
+    assert edu_paragraphs[2].runs[0].font.size is None
+    assert edu_paragraphs[2].runs[1].font.size is None
+
+
+def test_prioritized_skill_catalog_fallback_grounding_and_alias_repair_hints(pipeline):
+    from resume_assistant.resume_generator import _validation_repair_details
+    from resume_assistant.section_plan import ExcludedEvidence, content_sha256
+
+    paths, *_ = pipeline
+    plan, catalog, snapshot, manifest = _loaded(paths['plan'], paths['candidate'])
+    planned = plan.prioritized_skills[0]
+
+    extra_matching = catalog.evidence_records[0].model_copy(update={
+        'evidence_id': 'e' * 64,
+        'evidence_type': EvidenceType.TECHNICAL_SKILL,
+        'section_reference': 'technical-skills-database',
+        'original_content': f'{planned.skill_text}, FastAPI, Redis',
+        'formatting': {'style': 'Normal'},
+    })
+    extra_duplicate = catalog.evidence_records[0].model_copy(update={
+        'evidence_id': 'd' * 64,
+        'evidence_type': EvidenceType.TECHNICAL_SKILL,
+        'section_reference': 'technical-skills-database',
+        'original_content': f'  {planned.skill_text}, FastAPI, Redis ',
+        'formatting': {'style': 'Normal'},
+    })
+    extra_unrelated = catalog.evidence_records[0].model_copy(update={
+        'evidence_id': 'f' * 64,
+        'evidence_type': EvidenceType.TECHNICAL_SKILL,
+        'section_reference': 'technical-skills-database',
+        'original_content': 'Terraform, Kubernetes',
+        'formatting': {'style': 'Normal'},
+    })
+    updated_catalog = catalog.model_copy(update={
+        'evidence_records': [
+            *catalog.evidence_records,
+            extra_matching,
+            extra_duplicate,
+            extra_unrelated,
+        ],
+    })
+    template_prov = plan.evidence_provenance[0]
+    updated_plan = plan.model_copy(update={
+        'excluded_evidence': [
+            *plan.excluded_evidence,
+            ExcludedEvidence(evidence_id=extra_matching.evidence_id, reason='output_section_budget_exhausted'),
+            ExcludedEvidence(evidence_id=extra_duplicate.evidence_id, reason='output_section_budget_exhausted'),
+            ExcludedEvidence(evidence_id=extra_unrelated.evidence_id, reason='output_section_budget_exhausted'),
+        ],
+        'evidence_provenance': [
+            *plan.evidence_provenance,
+            template_prov.model_copy(update={
+                'evidence_id': extra_matching.evidence_id,
+                'evidence_type': EvidenceType.TECHNICAL_SKILL,
+                'source_section_reference': 'technical-skills-database',
+                'output_section_id': None,
+                'resume_entry_id': None,
+                'content_eligible': True,
+                'atomic_skill_text': None,
+                'content_sha256': content_sha256(extra_matching.original_content),
+            }),
+            template_prov.model_copy(update={
+                'evidence_id': extra_duplicate.evidence_id,
+                'evidence_type': EvidenceType.TECHNICAL_SKILL,
+                'source_section_reference': 'technical-skills-database',
+                'output_section_id': None,
+                'resume_entry_id': None,
+                'content_eligible': True,
+                'atomic_skill_text': None,
+                'content_sha256': content_sha256(extra_duplicate.original_content),
+            }),
+            template_prov.model_copy(update={
+                'evidence_id': extra_unrelated.evidence_id,
+                'evidence_type': EvidenceType.TECHNICAL_SKILL,
+                'source_section_reference': 'technical-skills-database',
+                'output_section_id': None,
+                'resume_entry_id': None,
+                'content_eligible': True,
+                'atomic_skill_text': None,
+                'content_sha256': content_sha256(extra_unrelated.original_content),
+            }),
+        ],
+    })
+
+    hydrated = hydrate_plan_evidence(updated_plan, updated_catalog, snapshot, manifest)
+    assert extra_matching.evidence_id in hydrated.evidence_alias_by_id
+    assert extra_duplicate.evidence_id not in hydrated.evidence_alias_by_id
+
+    grounded_sk = _valid_payload(updated_plan, updated_catalog)
+    grounded_sk['skill_groups'][0]['skills'][0]['evidence_ids'] = [extra_matching.evidence_id]
+    ok_report = validate_tailored_resume(
+        TailoredResumePayload.model_validate(grounded_sk),
+        updated_plan,
+        updated_catalog,
+        raise_on_error=False,
+    )
+    assert ok_report.traceability_verified is True
+
+    ungrounded_sk = _valid_payload(updated_plan, updated_catalog)
+    ungrounded_sk['skill_groups'][0]['skills'][0]['evidence_ids'] = [extra_unrelated.evidence_id]
+    bad_payload = TailoredResumePayload.model_validate(ungrounded_sk)
+    bad_report = validate_tailored_resume(
+        bad_payload,
+        updated_plan,
+        updated_catalog,
+        raise_on_error=False,
+    )
+    assert bad_report.traceability_verified is False
+    assert any(f.code == 'skill_evidence_out_of_scope' for f in bad_report.findings)
+
+    details = _validation_repair_details(
+        bad_report, payload=bad_payload, plan=updated_plan, hydrated=hydrated
+    )
+    skill_detail = next(d for d in details if d['code'] == 'skill_evidence_out_of_scope')
+    assert 'Use matched_evidence_ids:' in skill_detail['message']
+    for eid in planned.matched_evidence_ids:
+        assert hydrated.evidence_alias_by_id[eid] in skill_detail['message']
+        assert eid not in skill_detail['message']
+
+
+def test_metadata_only_experience_entry_allows_empty_bullets_and_renders_cleanly(pipeline):
+    paths, *_ = pipeline
+    plan, catalog, _snapshot, _manifest = _loaded(paths['plan'], paths['candidate'])
+    data = _valid_payload(plan, catalog)
+    exp_section = next(s for s in data['sections'] if s['section_id'] == 'professional-experience')
+    exp_section['entries'][0]['organization'] = 'National Service'
+    exp_section['entries'][0]['dates'] = '2023 – 2024'
+    exp_section['entries'][0]['location'] = 'Cairo, Egypt'
+    exp_section['entries'][0]['bullets'] = []
+
+    payload = TailoredResumePayload.model_validate(data)
+    report = validate_tailored_resume(payload, plan, catalog, raise_on_error=False)
+    assert report.traceability_verified is True
+    assert not any(f.severity == 'error' for f in report.findings)
+
+    artifact = TailoredResumeArtifact(
+        prompt_version=RESUME_GENERATION_PROMPT_VERSION,
+        plan_schema_version=plan.schema_version,
+        model='synthetic-generation-model',
+        header=DeterministicHeader(full_name='Ada Lovelace', contact_lines=[]),
+        content=payload,
+        validation=report,
+    )
+    document = docx_renderer.build_document(artifact, page_size='A4')
+    job_heading_idx = next(
+        idx for idx, p in enumerate(document.paragraphs) if p.style.name == 'Resume Job Title'
+    )
+    assert 'National Service' in document.paragraphs[job_heading_idx].text
+    assert document.paragraphs[job_heading_idx + 1].style.name == 'Resume Entry Meta'
+    assert document.paragraphs[job_heading_idx + 1].text == 'Cairo, Egypt'
+    assert not any(
+        p.style.name == 'List Bullet' and not p.text.strip()
+        for p in document.paragraphs
+    )

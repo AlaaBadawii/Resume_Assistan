@@ -5,7 +5,7 @@ import json
 import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_serializer, model_validator
 
 from resume_assistant.job_models import MeaningfulText
 from resume_assistant.matching_models import ComponentMatch, MatchStatus, RequirementCategory
@@ -16,7 +16,7 @@ PLAN_SCHEMA_VERSION = '2.0.0'
 PLANNER_VERSION = '2.0.0'
 OutputSectionId = Literal[
     'professional-summary', 'technical-skills', 'professional-experience',
-    'projects', 'education', 'certifications',
+    'projects', 'education', 'certifications', 'languages',
 ]
 OUTPUT_SECTION_ORDER = (
     'professional-summary', 'technical-skills', 'professional-experience',
@@ -29,6 +29,7 @@ SECTION_HEADING_TEXT = {
     'projects': 'Projects',
     'education': 'Education',
     'certifications': 'Certifications',
+    'languages': 'Languages',
 }
 SOURCE_SECTION_TO_OUTPUT_SECTION = {
     'professional-identity': 'professional-summary',
@@ -49,13 +50,22 @@ SECTION_EVIDENCE_TYPES = {
     'projects': EvidenceType.PROJECT,
     'education': EvidenceType.EDUCATION,
     'certifications': EvidenceType.CERTIFICATION,
+    'languages': EvidenceType.LANGUAGE,
 }
 DEFAULT_BUDGETS = {
     'max_output_sections': len(OUTPUT_SECTION_ORDER), 'max_skills': 15,
     'max_experience_entries': 5, 'max_projects': 5, 'max_education_entries': 5,
     'max_certifications': 5, 'target_pages': 2,
 }
-ENTRY_GROUPED_SECTIONS = frozenset({'professional-experience', 'projects', 'education', 'certifications'})
+COMPACT_1PAGE_PRESET = {
+    'max_projects': 3,
+    'max_certifications': 6,
+    'projects_first': True,
+    'include_languages': True,
+}
+ENTRY_GROUPED_SECTIONS = frozenset({
+    'professional-experience', 'projects', 'education', 'certifications', 'languages',
+})
 SUPPORTED_STATUSES = frozenset({'supported', 'partially_supported'})
 SKILL_TIER_ORDER = ('required', 'preferred', 'other')
 Sha256 = Annotated[str, Field(pattern=r'^[0-9a-fA-F]{64}$')]
@@ -281,6 +291,9 @@ class PlanBudgets(StrictPlanModel):
     max_projects: int = Field(ge=0)
     max_education_entries: int = Field(default=DEFAULT_BUDGETS['max_education_entries'], ge=0)
     max_certifications: int = Field(ge=0)
+    max_languages: int = Field(default=5, ge=0)
+    projects_first: bool = False
+    include_languages: bool = False
     target_pages: Literal[1, 2]
     page_guarantee: Literal[False] = False
 
@@ -298,13 +311,72 @@ class PlanBudgets(StrictPlanModel):
             raise ValueError('Content budgets cannot guarantee a page count.')
         return value
 
+    def source_section_mapping(self) -> dict[str, str]:
+        mapping = dict(SOURCE_SECTION_TO_OUTPUT_SECTION)
+        if self.include_languages:
+            mapping['languages'] = 'languages'
+        return mapping
+
+    def section_order(self) -> tuple[str, ...]:
+        order = list(OUTPUT_SECTION_ORDER)
+        if self.projects_first:
+            exp_index = order.index('professional-experience')
+            proj_index = order.index('projects')
+            order[exp_index], order[proj_index] = order[proj_index], order[exp_index]
+        if self.include_languages:
+            order.append('languages')
+        return tuple(order)
+
     def section_caps(self) -> dict[str, int]:
         caps = {
             'professional-summary': 1, 'technical-skills': self.max_skills,
             'professional-experience': self.max_experience_entries, 'projects': self.max_projects,
             'education': self.max_education_entries, 'certifications': self.max_certifications,
         }
+        if self.include_languages:
+            caps['languages'] = self.max_languages
         return caps if self.target_pages == 2 else {key: (max(value // 2, 1) if value else 0) for key, value in caps.items()}
+
+    @model_serializer(mode='wrap')
+    def serialize_budgets(self, handler):
+        data = handler(self)
+        if data.get('max_languages') == 5:
+            data.pop('max_languages', None)
+        if data.get('projects_first') is False:
+            data.pop('projects_first', None)
+        if data.get('include_languages') is False:
+            data.pop('include_languages', None)
+        return data
+
+
+def build_plan_budgets(
+    *,
+    max_projects: int | None = None,
+    max_certifications: int | None = None,
+    projects_first: bool = False,
+    include_languages: bool = False,
+    preset: str | None = None,
+) -> PlanBudgets:
+    '''Resolve PlanBudgets from defaults, an optional preset, and explicit overrides.'''
+    values: dict[str, object] = dict(DEFAULT_BUDGETS)
+    if preset is not None:
+        if preset != 'compact-1page':
+            raise ValueError(f'Unsupported planning preset: {preset}')
+        values.update(COMPACT_1PAGE_PRESET)
+    if max_projects is not None:
+        values['max_projects'] = max_projects
+    if max_certifications is not None:
+        values['max_certifications'] = max_certifications
+    if projects_first:
+        values['projects_first'] = True
+    if include_languages:
+        values['include_languages'] = True
+    if values.get('include_languages'):
+        values['max_output_sections'] = max(
+            int(values['max_output_sections']),
+            len(OUTPUT_SECTION_ORDER) + 1,
+        )
+    return PlanBudgets(**values)
 
 
 class ExcludedEvidence(StrictPlanModel):
@@ -459,7 +531,8 @@ class ResumeSectionPlan(StrictPlanModel):
             raise ValueError('Candidate record count must agree with complete provenance accounting.')
         sections = {section.section_id: section for section in self.ordered_sections}
         _unique([section.section_id for section in self.ordered_sections], 'Output sections must be unique.')
-        if len(sections) > self.budgets.max_output_sections or list(sections) != [identifier for identifier in OUTPUT_SECTION_ORDER if identifier in sections]:
+        expected_order = self.budgets.section_order()
+        if len(sections) > self.budgets.max_output_sections or list(sections) != [identifier for identifier in expected_order if identifier in sections]:
             raise ValueError('Output section count and presentation order must respect the contract.')
         flat = [identifier for section in self.ordered_sections for identifier in section.selected_evidence_ids]
         if flat != self.selected_evidence_ids:
@@ -486,13 +559,14 @@ class ResumeSectionPlan(StrictPlanModel):
                     raise ValueError('Resume entry members must retain their source section.')
             for identifier in section.selected_evidence_ids:
                 assignments[identifier] = (section.section_id, member_entries.get(identifier))
+        source_mapping = self.budgets.source_section_mapping()
         for identifier, reference in provenance.items():
             if reference.source_document != self.planning_metadata.source_candidate_filename or reference.source_sha256 != self.planning_metadata.source_candidate_source_sha256:
                 raise ValueError('Per-evidence source identity must agree with the candidate source.')
             expected_assignment = assignments.get(identifier, (None, None))
             if (reference.output_section_id, reference.resume_entry_id) != expected_assignment:
                 raise ValueError('Provenance section and entry associations must equal actual selections.')
-            destination = SOURCE_SECTION_TO_OUTPUT_SECTION.get(reference.source_section_reference)
+            destination = source_mapping.get(reference.source_section_reference)
             if identifier in selected:
                 if not reference.content_eligible or destination != reference.output_section_id or reference.evidence_type != SECTION_EVIDENCE_TYPES[destination]:
                     raise ValueError('Selected evidence must be eligible for its source-derived output section.')

@@ -12,7 +12,7 @@ resume-generation stage.
 '''
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 
@@ -37,12 +37,12 @@ from resume_assistant.section_detector import TOP_LEVEL_NUMBER_PATTERN, _identif
 from resume_assistant.section_plan import (
     PLAN_SCHEMA_VERSION, PLANNER_VERSION, OUTPUT_SECTION_ORDER, SECTION_HEADING_TEXT,
     SOURCE_SECTION_TO_OUTPUT_SECTION, BACKGROUND_SECTION_REFERENCES, SECTION_EVIDENCE_TYPES,
-    DEFAULT_BUDGETS, ENTRY_GROUPED_SECTIONS, SUPPORTED_STATUSES, SKILL_TIER_ORDER,
+    DEFAULT_BUDGETS, COMPACT_1PAGE_PRESET, ENTRY_GROUPED_SECTIONS, SUPPORTED_STATUSES, SKILL_TIER_ORDER,
     PlanningMetadata, TargetJobContext, SkillRequirementAssociation, PlannedSkill,
     PlannedRequirementCoverage, ProfessionalSummaryBlueprint, PlanBudgets,
     ExcludedEvidence, PlannedResumeEntry, PlannedSection, ResumeSectionPlan,
     EvidenceProvenance, PlanSourceLocation, PlanCellSource, IdentityStatement,
-    ExperienceCategoryBinding, ExtractionGenerationIdentity, content_sha256,
+    ExperienceCategoryBinding, ExtractionGenerationIdentity, build_plan_budgets, content_sha256,
     skill_identity as _skill_identity, source_order_key as _source_order_key,
 )
 
@@ -70,6 +70,15 @@ _GITHUB_PROFILE_VALUE = re.compile(
 )
 _ENTRY_HEADING_STYLE = re.compile(r'heading\s*([1-9])', re.IGNORECASE)
 _NUMBERED_ENTRY_HEADING = re.compile(r'^\s*(\d+)\.(\d+)\.?\s+\S')
+_SECONDARY_PROJECT_TOKENS = frozenset({'additional', 'archive', 'minor', 'secondary', 'other'})
+_PROGRAM_LABEL_PATTERN = re.compile(
+    r'(?:^|\|\s*)(?:parent\s+)?(?:program|specialization|track)\s*:\s*(.+?)\s*(?:\||$)',
+    re.IGNORECASE,
+)
+_PROGRAM_SUBUNIT_SUFFIX = re.compile(
+    r'\s*\(\s*(?:course|module|part|unit|track|step)\s*#?\s*\d+(?:\s*(?:of|/)\s*\d+)?\s*\)\s*$',
+    re.IGNORECASE,
+)
 
 
 class SectionPlannerError(ValueError):
@@ -253,8 +262,13 @@ def _heading_evidence_ids(catalog: CandidateEvidenceCatalog, snapshot: DocumentS
     return headings
 
 
-def _eligible_section_evidence(record: EvidenceRecord, headings: set[str]) -> bool:
-    destination = SOURCE_SECTION_TO_OUTPUT_SECTION.get(record.section_reference)
+def _eligible_section_evidence(
+    record: EvidenceRecord,
+    headings: set[str],
+    *,
+    source_mapping: Mapping[str, str] = SOURCE_SECTION_TO_OUTPUT_SECTION,
+) -> bool:
+    destination = source_mapping.get(record.section_reference)
     if destination is None or record.evidence_type != SECTION_EVIDENCE_TYPES[destination]:
         return False
     if record.evidence_id in headings or not record.original_content.strip():
@@ -547,6 +561,87 @@ def _effective_section_budgets(budgets: PlanBudgets) -> dict[str, int]:
     return budgets.section_caps()
 
 
+def _is_secondary_project_section(source_section_reference: str | None) -> bool:
+    if not source_section_reference:
+        return False
+    tokens = set(source_section_reference.casefold().split('-'))
+    return bool(tokens & _SECONDARY_PROJECT_TOKENS)
+
+
+def _normalized_cert_title(entry: PlannedResumeEntry, records_by_id: Mapping[str, EvidenceRecord]) -> str:
+    candidate_ids = (
+        [entry.identity_evidence_id]
+        if entry.identity_evidence_id in records_by_id
+        else entry.selected_evidence_ids[:1]
+    )
+    for identifier in candidate_ids:
+        record = records_by_id.get(identifier)
+        if record is None:
+            continue
+        for raw_line in record.original_content.splitlines():
+            line = raw_line.strip()
+            if not line or _PROGRAM_LABEL_PATTERN.search(line):
+                continue
+            numbered = _NUMBERED_ENTRY_HEADING.match(line)
+            if numbered:
+                line = line[numbered.end() - 1:].strip()
+            return _skill_identity(line)
+    return ''
+
+
+def _cert_program_relations(
+    entries: list[PlannedResumeEntry],
+    records_by_id: Mapping[str, EvidenceRecord] | None,
+) -> tuple[dict[int, str], dict[int, str]]:
+    '''Map certification entry indices to parent-program links without hardcoding titles.'''
+    if not records_by_id:
+        return {}, {}
+    subcourse_of: dict[int, str] = {}
+    for index, entry in enumerate(entries):
+        for identifier in entry.selected_evidence_ids:
+            record = records_by_id.get(identifier)
+            if record is None:
+                continue
+            for raw_line in record.original_content.splitlines():
+                match = _PROGRAM_LABEL_PATTERN.search(raw_line)
+                if match is None:
+                    continue
+                raw_program = match.group(1).strip()
+                had_subunit = bool(_PROGRAM_SUBUNIT_SUFFIX.search(raw_program))
+                cleaned = _PROGRAM_SUBUNIT_SUFFIX.sub('', raw_program).strip()
+                program_key = _skill_identity(cleaned)
+                if not program_key:
+                    continue
+                title_norm = _normalized_cert_title(entry, records_by_id)
+                if had_subunit or (title_norm and title_norm != program_key and program_key not in title_norm):
+                    subcourse_of[index] = program_key
+                    break
+            if index in subcourse_of:
+                break
+    program_keys = set(subcourse_of.values())
+    if not program_keys:
+        return {}, {}
+    parent_for: dict[int, str] = {}
+    for index, entry in enumerate(entries):
+        if index in subcourse_of:
+            continue
+        title_norm = _normalized_cert_title(entry, records_by_id)
+        if not title_norm:
+            continue
+        primary_title = _skill_identity(re.split(r'\s+[—|]\s+', title_norm)[0])
+        for program_key in sorted(program_keys, key=len, reverse=True):
+            if (
+                title_norm == program_key
+                or primary_title == program_key
+                or title_norm.startswith(program_key)
+                or (len(program_key) >= 6 and program_key in title_norm)
+                or (len(primary_title) >= 10 and primary_title in program_key)
+            ):
+                parent_for[index] = program_key
+                break
+    return parent_for, subcourse_of
+
+
 def _select_section_evidence(
     records: list[EvidenceRecord],
     priority_for: Callable[[str], int],
@@ -556,6 +651,8 @@ def _select_section_evidence(
     eligible_ids: set[str],
     headings: set[str],
     snapshot: DocumentSnapshot | None,
+    section_id: str | None = None,
+    records_by_id: Mapping[str, EvidenceRecord] | None = None,
 ) -> tuple[list[str], list[str], list[PlannedResumeEntry]]:
     '''Select records under a budget after relevance ranking.
 
@@ -584,14 +681,46 @@ def _select_section_evidence(
         ]
         return selected, excluded, []
     entries = _group_source_entries(records, eligible_ids, headings, snapshot)
-    entry_order = sorted(
-        range(len(entries)),
-        key=lambda entry_index: (
-            min(priority_for(evidence_id) for evidence_id in entries[entry_index].selected_evidence_ids),
-            entry_index,
-        ),
-    )
-    chosen_entries = set(entry_order[:budget])
+
+    def _entry_rank_key(entry_index: int):
+        entry = entries[entry_index]
+        relevance = min(priority_for(evidence_id) for evidence_id in entry.selected_evidence_ids)
+        if section_id == 'projects':
+            tier = 1 if _is_secondary_project_section(entry.source_section_reference) else 0
+            return (tier, relevance, entry_index)
+        return (relevance, entry_index)
+
+    entry_order = sorted(range(len(entries)), key=_entry_rank_key)
+    if section_id == 'certifications' and budget > 0:
+        parent_for, subcourse_of = _cert_program_relations(entries, records_by_id)
+        chosen_entries: set[int] = set()
+        parent_selected: set[str] = set()
+        subcourse_counts: dict[str, int] = {}
+        program_totals: dict[str, int] = {}
+        for entry_index in entry_order:
+            if len(chosen_entries) >= budget:
+                break
+            parent_key = parent_for.get(entry_index)
+            sub_key = subcourse_of.get(entry_index)
+            if sub_key is not None:
+                if sub_key in parent_selected:
+                    if subcourse_counts.get(sub_key, 0) >= 1:
+                        continue
+                elif program_totals.get(sub_key, 0) >= 2:
+                    continue
+                chosen_entries.add(entry_index)
+                subcourse_counts[sub_key] = subcourse_counts.get(sub_key, 0) + 1
+                program_totals[sub_key] = program_totals.get(sub_key, 0) + 1
+            elif parent_key is not None:
+                if program_totals.get(parent_key, 0) >= 2:
+                    continue
+                chosen_entries.add(entry_index)
+                parent_selected.add(parent_key)
+                program_totals[parent_key] = program_totals.get(parent_key, 0) + 1
+            else:
+                chosen_entries.add(entry_index)
+    else:
+        chosen_entries = set(entry_order[:budget])
     selected_entries = [entry for index, entry in enumerate(entries) if index in chosen_entries]
     selected_set = {
         evidence_id for entry in selected_entries for evidence_id in entry.selected_evidence_ids
@@ -808,9 +937,12 @@ class SectionPlanner:
         if {reference.evidence_id for reference in result.evidence_provenance} != set(records):
             raise SectionPlannerError('Section plan provenance does not account for the original evidence catalog.')
         headings = _heading_evidence_ids(catalog, snapshot)
+        source_mapping = self.budgets.source_section_mapping()
         for reference in result.evidence_provenance:
             record = records[reference.evidence_id]
-            eligible = _eligible_section_evidence(record, headings)
+            eligible = _eligible_section_evidence(
+                record, headings, source_mapping=source_mapping,
+            )
             source_cells = [cell.model_dump(warnings='error') for cell in record.table_context.cell_sources] if record.table_context is not None else None
             reference_cells = [cell.model_dump(warnings='error') for cell in reference.cell_sources] if reference.cell_sources is not None else None
             if (
@@ -878,9 +1010,11 @@ class SectionPlanner:
         # Section assignment is not enough to establish content eligibility:
         # preserve the extractor's content types and exclude structural records.
         headings = _heading_evidence_ids(catalog, snapshot)
+        source_mapping = self.budgets.source_section_mapping()
+        section_order = self.budgets.section_order()
         exclusion_reasons: dict[str, str] = {}
         section_pools: dict[str, list[EvidenceRecord]] = {
-            section_id: [] for section_id in OUTPUT_SECTION_ORDER
+            section_id: [] for section_id in section_order
         }
         for record in catalog.evidence_records:
             if record.section_reference is None:
@@ -888,18 +1022,20 @@ class SectionPlanner:
                     'unclassified_section_no_output_mapping'
                 )
                 continue
-            destination = SOURCE_SECTION_TO_OUTPUT_SECTION.get(record.section_reference)
+            destination = source_mapping.get(record.section_reference)
             if destination is None:
                 exclusion_reasons[record.evidence_id] = (
                     'source_section_not_mapped_to_output_section'
                 )
                 continue
             section_pools[destination].append(record)
-            if not _eligible_section_evidence(record, headings):
+            if not _eligible_section_evidence(
+                record, headings, source_mapping=source_mapping,
+            ):
                 exclusion_reasons[record.evidence_id] = (
                     'content_not_eligible_for_output_section'
                 )
-        for section_id in OUTPUT_SECTION_ORDER:
+        for section_id in section_order:
             section_pools[section_id].sort(key=_source_order_key)
         eligible_ids = {
             record.evidence_id
@@ -962,7 +1098,7 @@ class SectionPlanner:
 
         # --- Select whole source groups before applying the output-section cap ---
         ordered_sections: list[PlannedSection] = []
-        for section_id in OUTPUT_SECTION_ORDER:
+        for section_id in section_order:
             pool = section_pools[section_id]
             if not pool:
                 continue
@@ -975,6 +1111,8 @@ class SectionPlanner:
                 eligible_ids=eligible_ids,
                 headings=headings,
                 snapshot=snapshot,
+                section_id=section_id,
+                records_by_id=records_by_id,
             )
             for evidence_id in budget_excluded_ids:
                 exclusion_reasons[evidence_id] = 'content_budget_exhausted'
@@ -1006,7 +1144,7 @@ class SectionPlanner:
             ordered_sections,
             key=lambda section: (
                 min(_evidence_priority(evidence_id) for evidence_id in section.selected_evidence_ids),
-                OUTPUT_SECTION_ORDER.index(section.section_id),
+                section_order.index(section.section_id),
             ),
         )
         kept_sections = {section.section_id for section in ranked_sections[: self.budgets.max_output_sections]}

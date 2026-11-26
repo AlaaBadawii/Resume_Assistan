@@ -43,6 +43,7 @@ from resume_assistant.section_planner import (
     ResumeSectionPlan,
     SectionPlanner,
     SectionPlannerError,
+    build_plan_budgets,
 )
 
 
@@ -376,7 +377,20 @@ def run_plan_sections(
     match_path: Path,
     candidate_evidence_path: Path,
     output_path: Path | None = None,
+    *,
+    max_projects: int | None = None,
+    max_certifications: int | None = None,
+    projects_first: bool = False,
+    include_languages: bool = False,
+    preset: str | None = None,
 ) -> tuple[Path, ResumeSectionPlan]:
+    budgets = build_plan_budgets(
+        max_projects=max_projects,
+        max_certifications=max_certifications,
+        projects_first=projects_first,
+        include_languages=include_languages,
+        preset=preset,
+    )
     output_path = normalize_output_path(
         PROJECT_ROOT, output_path if output_path is not None else DEFAULT_SECTION_PLAN_OUTPUT_PATH,
     )
@@ -423,7 +437,7 @@ def run_plan_sections(
             _reject_section_plan_aliases(output_path, protected_paths)
 
         extraction_generation = ExtractionGenerationIdentity.from_manifest(manifest) if manifest is not None else None
-        planner = SectionPlanner()
+        planner = SectionPlanner(budgets=budgets)
         plan = planner.plan(
             analysis, match, catalog, snapshot, manifest_available=manifest is not None,
             extraction_generation=extraction_generation,
@@ -855,6 +869,37 @@ def main(argv=None) -> int:
         default=str(DEFAULT_SECTION_PLAN_OUTPUT_PATH),
         help='Path for the generated resume section plan JSON artifact.',
     )
+    plan_parser.add_argument(
+        '--max-projects',
+        type=int,
+        default=None,
+        help='Override maximum project entries selected by section planning.',
+    )
+    plan_parser.add_argument(
+        '--max-certifications',
+        type=int,
+        default=None,
+        help='Override maximum certification entries selected by section planning.',
+    )
+    plan_parser.add_argument(
+        '--projects-first',
+        action='store_true',
+        help='Place the projects section before professional-experience in ordered_sections.',
+    )
+    plan_parser.add_argument(
+        '--include-languages',
+        action='store_true',
+        help='Include the detected languages section in ordered_sections when present.',
+    )
+    plan_parser.add_argument(
+        '--preset',
+        choices=('compact-1page',),
+        default=None,
+        help=(
+            'Optional planning preset (compact-1page sets max_projects=3, '
+            'max_certifications=6, projects_first=True, include_languages=True).'
+        ),
+    )
     generate_parser = subparsers.add_parser(
         'generate-resume',
         help='Generate a validated, evidence-bound tailored resume JSON, DOCX, and/or PDF.',
@@ -1004,6 +1049,11 @@ def main(argv=None) -> int:
                 match_path=Path(args.match),
                 candidate_evidence_path=Path(args.candidate_evidence),
                 output_path=Path(args.output),
+                max_projects=args.max_projects,
+                max_certifications=args.max_certifications,
+                projects_first=args.projects_first,
+                include_languages=args.include_languages,
+                preset=args.preset,
             )
         except UnicodeDecodeError:
             print('error: input file is not valid UTF-8 text')

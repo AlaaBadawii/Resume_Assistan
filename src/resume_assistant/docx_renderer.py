@@ -29,7 +29,7 @@ from resume_assistant.generation_models import GeneratedEntry, TailoredResumeArt
 TailoredResume = TailoredResumeArtifact
 
 FONT = 'Calibri'
-BODY_SIZE = Pt(9.5)
+BODY_SIZE = Pt(9)
 HEADING_COLOR = RGBColor(0x1F, 0x3B, 0x57)
 
 PAGE_SIZES: dict[str, Tuple[Length, Length]] = {
@@ -49,6 +49,24 @@ _COMPACT_SECTIONS = frozenset({'education', 'certifications'})
 _NON_SECTION_OUTPUTS = frozenset({'professional-summary', 'technical-skills'})
 _LINK_CONTACT_PATTERN = re.compile(
     r'(?i)(?:^https?://|^www\.|(?:[a-z0-9-]+\.)+(?:com|io|dev|me|net|org|ai|co|app|tech|site|info|ly)(?:/|$))'
+)
+_MONTH_ABBREVIATIONS = {
+    'january': 'Jan',
+    'february': 'Feb',
+    'march': 'Mar',
+    'april': 'Apr',
+    'may': 'May',
+    'june': 'Jun',
+    'july': 'Jul',
+    'august': 'Aug',
+    'september': 'Sep',
+    'october': 'Oct',
+    'november': 'Nov',
+    'december': 'Dec',
+}
+_FULL_MONTH_PATTERN = re.compile(
+    r'\b(' + '|'.join(_MONTH_ABBREVIATIONS) + r')\b',
+    re.IGNORECASE,
 )
 
 
@@ -107,61 +125,69 @@ def build_styles(doc) -> None:
     normal = doc.styles['Normal']
     normal.font.name = FONT
     normal.font.size = BODY_SIZE
+    normal.paragraph_format.line_spacing = 1.06
 
     def paragraph_format(style):
         return style.paragraph_format
 
-    name = _style(doc, 'Resume Name', Pt(17), bold=True)
+    name = _style(doc, 'Resume Name', Pt(15.5), bold=True)
     paragraph_format(name).alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph_format(name).space_after = Pt(0)
 
-    title = _style(doc, 'Resume Title', Pt(11), bold=True)
+    title = _style(doc, 'Resume Title', Pt(10.5), bold=True)
     paragraph_format(title).alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph_format(title).space_before = Pt(0)
-    paragraph_format(title).space_after = Pt(1)
+    paragraph_format(title).space_after = Pt(0.5)
 
-    tagline = _style(doc, 'Resume Tagline', Pt(9.5), italic=True)
+    tagline = _style(doc, 'Resume Tagline', BODY_SIZE, italic=True)
     paragraph_format(tagline).alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph_format(tagline).space_after = Pt(1)
+    paragraph_format(tagline).space_after = Pt(0.5)
 
-    contact = _style(doc, 'Resume Contact', Pt(9))
+    contact = _style(doc, 'Resume Contact', Pt(8.5))
     paragraph_format(contact).alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph_format(contact).space_after = Pt(2)
+    paragraph_format(contact).space_after = Pt(1)
+    paragraph_format(contact).line_spacing = 1.05
 
-    heading = _style(doc, 'Resume Section Heading', Pt(10), bold=True, base='Heading 1')
+    heading = _style(doc, 'Resume Section Heading', Pt(9.5), bold=True, base='Heading 1')
     heading.font.color.rgb = HEADING_COLOR
-    paragraph_format(heading).space_before = Pt(6)
-    paragraph_format(heading).space_after = Pt(2)
+    paragraph_format(heading).space_before = Pt(4)
+    paragraph_format(heading).space_after = Pt(1.5)
     paragraph_format(heading).keep_with_next = True
     _bottom_border(heading, sz='6')
 
-    sub = _style(doc, 'Resume Subheading', Pt(9.5), bold=True)
-    paragraph_format(sub).space_before = Pt(3)
-    paragraph_format(sub).space_after = Pt(1)
+    sub = _style(doc, 'Resume Subheading', BODY_SIZE, bold=True)
+    paragraph_format(sub).space_before = Pt(2)
+    paragraph_format(sub).space_after = Pt(0.5)
+    paragraph_format(sub).line_spacing = 1.05
     paragraph_format(sub).keep_with_next = True
 
-    project = _style(doc, 'Resume Project Title', Pt(9.5), bold=True)
-    paragraph_format(project).space_before = Pt(3)
-    paragraph_format(project).space_after = Pt(1)
+    project = _style(doc, 'Resume Project Title', BODY_SIZE, bold=True)
+    paragraph_format(project).space_before = Pt(2)
+    paragraph_format(project).space_after = Pt(0.5)
+    paragraph_format(project).line_spacing = 1.05
     paragraph_format(project).keep_with_next = True
 
-    job = _style(doc, 'Resume Job Title', Pt(9.5), bold=True)
-    paragraph_format(job).space_before = Pt(3)
-    paragraph_format(job).space_after = Pt(1)
+    job = _style(doc, 'Resume Job Title', BODY_SIZE, bold=True)
+    paragraph_format(job).space_before = Pt(2)
+    paragraph_format(job).space_after = Pt(0.5)
+    paragraph_format(job).line_spacing = 1.05
     paragraph_format(job).keep_with_next = True
 
-    meta = _style(doc, 'Resume Entry Meta', Pt(9), italic=True)
-    paragraph_format(meta).space_after = Pt(1)
+    meta = _style(doc, 'Resume Entry Meta', Pt(8.5), italic=True)
+    paragraph_format(meta).space_after = Pt(0.5)
+    paragraph_format(meta).line_spacing = 1.05
     paragraph_format(meta).keep_with_next = True
 
     body = _style(doc, 'Resume Body', BODY_SIZE)
-    paragraph_format(body).space_after = Pt(1.5)
+    paragraph_format(body).space_after = Pt(1)
+    paragraph_format(body).line_spacing = 1.06
 
     bullet = doc.styles['List Bullet']
     bullet.font.name = FONT
     bullet.font.size = BODY_SIZE
     paragraph_format(bullet).space_before = Pt(0)
-    paragraph_format(bullet).space_after = Pt(1)
+    paragraph_format(bullet).space_after = Pt(0.5)
+    paragraph_format(bullet).line_spacing = 1.05
 
 
 def _add(doc, text: str, style: str):
@@ -278,6 +304,51 @@ def _has_entry_content(entry: GeneratedEntry) -> bool:
     )
 
 
+def _abbreviate_month_names(dates: str) -> str:
+    return _FULL_MONTH_PATTERN.sub(
+        lambda match: _MONTH_ABBREVIATIONS[match.group(1).casefold()],
+        dates,
+    )
+
+
+def _estimate_header_width_pt(
+    left_text: str,
+    right_dates: str,
+    left_pt: float,
+    right_pt: float,
+) -> float:
+    # Conservative advance factors keep single-line headers from wrapping in
+    # Calibri or wider Linux fallback fonts (Carlito / Liberation Sans).
+    left_width = len(left_text) * left_pt * 0.58
+    right_width = len(right_dates) * right_pt * 0.54
+    gap = 18.0 if (left_text and right_dates) else 0.0
+    return left_width + gap + right_width
+
+
+def _fit_entry_header_line(
+    left_text: str,
+    right_dates: str,
+    right_tab_pos: Length,
+) -> tuple[str, Optional[Pt], Optional[Pt]]:
+    if not left_text or not right_dates:
+        return right_dates, None, None
+    available_pt = (
+        right_tab_pos.pt
+        if hasattr(right_tab_pos, 'pt')
+        else float(right_tab_pos) / float(Pt(1))
+    )
+    fitted_dates = right_dates
+    if _estimate_header_width_pt(left_text, fitted_dates, 9.0, 9.0) <= available_pt * 0.94:
+        return fitted_dates, None, None
+    fitted_dates = _abbreviate_month_names(fitted_dates)
+    if _estimate_header_width_pt(left_text, fitted_dates, 9.0, 9.0) <= available_pt * 0.94:
+        return fitted_dates, None, None
+    for left_pt, right_pt in ((8.5, 8.5), (8.0, 8.0)):
+        if _estimate_header_width_pt(left_text, fitted_dates, left_pt, right_pt) <= available_pt * 0.94:
+            return fitted_dates, Pt(left_pt), Pt(right_pt)
+    return fitted_dates, Pt(8.0), Pt(8.0)
+
+
 def _add_entry_header_line(
     doc,
     style: str,
@@ -287,17 +358,24 @@ def _add_entry_header_line(
     *,
     keep_with_next: bool = True,
 ):
+    fitted_dates, left_size, right_size = _fit_entry_header_line(
+        left_text, right_dates, right_tab_pos
+    )
     paragraph = doc.add_paragraph(style=style)
     paragraph.paragraph_format.keep_with_next = keep_with_next
     if left_text:
         left_run = paragraph.add_run(left_text)
         left_run.bold = True
-    if right_dates:
+        if left_size is not None:
+            left_run.font.size = left_size
+    if fitted_dates:
         paragraph.paragraph_format.tab_stops.add_tab_stop(
             right_tab_pos, WD_TAB_ALIGNMENT.RIGHT
         )
-        tab_run = paragraph.add_run(f'\t{right_dates}' if left_text else right_dates)
+        tab_run = paragraph.add_run(f'\t{fitted_dates}' if left_text else fitted_dates)
         tab_run.bold = False
+        if right_size is not None:
+            tab_run.font.size = right_size
     return paragraph
 
 
@@ -337,7 +415,8 @@ def _render_entry(
                 right_tab_pos,
                 keep_with_next=False,
             )
-            paragraph.paragraph_format.space_after = Pt(1.5)
+            paragraph.paragraph_format.space_before = Pt(1)
+            paragraph.paragraph_format.space_after = Pt(0.5)
         return
 
     entry_style = _ENTRY_STYLE.get(section_id, 'Resume Subheading')
@@ -358,6 +437,26 @@ def _render_entry(
         _add(doc, bullet, 'List Bullet')
 
 
+def _format_language_entry(entry: GeneratedEntry) -> str:
+    title = entry.title.strip()
+    detail_parts: list[str] = []
+    for value in (entry.meta, entry.organization, entry.dates, entry.location):
+        cleaned = (value or '').strip()
+        if cleaned and cleaned.casefold() not in title.casefold():
+            detail_parts.append(cleaned)
+    bullets = [bullet.text.strip() for bullet in entry.bullets if bullet.text.strip()]
+    if title.casefold() in ('languages', 'language', 'spoken languages') and bullets:
+        return ' · '.join(dict.fromkeys(bullets))
+    for bullet in bullets:
+        if bullet.casefold() not in title.casefold():
+            detail_parts.append(bullet)
+    if not title:
+        return ' · '.join(dict.fromkeys(detail_parts))
+    if detail_parts:
+        return f"{title} ({', '.join(dict.fromkeys(detail_parts))})"
+    return title
+
+
 def build_document(
     artifact: TailoredResumeArtifact, page_size: str = DEFAULT_PAGE_SIZE
 ) -> Document:
@@ -367,8 +466,8 @@ def build_document(
     section = doc.sections[0]
     section.page_width = width
     section.page_height = height
-    section.top_margin = Inches(0.45)
-    section.bottom_margin = Inches(0.45)
+    section.top_margin = Inches(0.38)
+    section.bottom_margin = Inches(0.38)
     section.left_margin = Inches(0.5)
     section.right_margin = Inches(0.5)
     section.header_distance = Inches(0.25)
@@ -402,7 +501,8 @@ def build_document(
         _add(doc, 'TECHNICAL SKILLS', 'Resume Section Heading')
         for group_name, skills in groups:
             paragraph = doc.add_paragraph(style='Resume Body')
-            paragraph.paragraph_format.space_after = Pt(1)
+            paragraph.paragraph_format.space_after = Pt(0.5)
+            paragraph.paragraph_format.line_spacing = 1.05
             label_run = paragraph.add_run(f'{group_name}: ')
             label_run.bold = True
             paragraph.add_run(' · '.join(skills))
@@ -414,6 +514,15 @@ def build_document(
         if not entries:
             continue
         _add(doc, generated.heading_text.strip().upper(), 'Resume Section Heading')
+        if generated.section_id == 'languages':
+            items = [
+                item for item in (_format_language_entry(entry) for entry in entries)
+                if item
+            ]
+            if items:
+                paragraph = _add(doc, ' · '.join(dict.fromkeys(items)), 'Resume Body')
+                paragraph.paragraph_format.space_after = Pt(1)
+            continue
         for entry in entries:
             _render_entry(doc, generated.section_id, entry, right_tab_pos)
 

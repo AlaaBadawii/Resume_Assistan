@@ -19,7 +19,7 @@ from resume_assistant.matching import CandidateJobIntegrityError, CandidateJobMa
 from resume_assistant.matching_models import CandidateJobMatch
 from resume_assistant.models import EvidenceType, SourceLocation
 from resume_assistant.publication_reader import load_committed_pair
-from resume_assistant.section_planner import PLAN_SCHEMA_VERSION, SectionPlanner
+from resume_assistant.section_planner import PLAN_SCHEMA_VERSION, ResumeSectionPlan, SectionPlanner
 from tests.fixtures import builders
 from tests.fixtures.jobs import empty_job_payload, grounded_job_payload, synthetic_candidate_catalog, synthetic_evidence
 from tests.test_section_planner import _cross_artifact_inputs
@@ -1057,3 +1057,117 @@ def test_atomic_replace_failure_preserves_inputs_and_previous_output(tmp_path, m
     assert private_path not in captured.out + captured.err
     assert {key: path.read_bytes() for key, path in paths.items()} == before
     assert not list(paths['output'].parent.glob('.resume-assistant-*.tmp'))
+
+
+def _rich_project_cert_language_artifacts(tmp_path):
+    processed = tmp_path / 'data' / 'private' / 'processed'
+    processed.mkdir(parents=True, exist_ok=True)
+    master_path = tmp_path / 'data' / 'private' / 'synthetic_master.docx'
+    master_path.parent.mkdir(parents=True, exist_ok=True)
+
+    doc = Document()
+    doc.add_heading('1. Professional Experience and Engineering Training', level=1)
+    p = doc.add_paragraph('1.1. Backend Engineer at Acme')
+    p.runs[0].bold = True
+    doc.add_paragraph('Built Python APIs.')
+
+    doc.add_heading('2. Independent Software and AI Projects', level=1)
+    for idx in range(1, 6):
+        p = doc.add_paragraph(f'2.{idx}. Project {idx}')
+        p.runs[0].bold = True
+        doc.add_paragraph(f'Built project {idx} with Python.')
+
+    doc.add_heading('3. Certifications and Professional Development', level=1)
+    for idx in range(1, 8):
+        p = doc.add_paragraph(f'3.{idx}. Cert {idx}')
+        p.runs[0].bold = True
+        doc.add_paragraph(f'Issued 202{idx % 5}')
+
+    doc.add_heading('4. Languages', level=1)
+    doc.add_paragraph('Arabic (Native)')
+    doc.add_paragraph('English (Professional Working Proficiency)')
+    doc.save(master_path)
+
+    evidence_path = processed / 'candidate_evidence.json'
+    snapshot_path = processed / 'document_snapshot.json'
+    old_root = cli_module.PROJECT_ROOT
+    cli_module.PROJECT_ROOT = tmp_path
+    try:
+        catalog, _snapshot, _sections, _unclassified, evidence_path, _snap, _commit = (
+            cli_module.run_extract_master(
+                master_path=master_path,
+                evidence_output_path=evidence_path,
+                snapshot_output_path=snapshot_path,
+            )
+        )
+    finally:
+        cli_module.PROJECT_ROOT = old_root
+
+    analysis_payload = dict(grounded_job_payload())
+    analysis_payload['prompt_version'] = '2.0.0'
+    analysis = JobDescriptionAnalysis.model_validate(analysis_payload)
+    match = CandidateJobMatcher(catalog).assess(analysis)
+
+    analysis_path = processed / 'analysis.json'
+    match_path = processed / 'match.json'
+    output_path = processed / 'plan.json'
+    _write_json(analysis_path, json.loads(analysis.model_dump_json()))
+    _write_json(match_path, json.loads(match.model_dump_json()))
+    return {
+        'analysis': analysis_path,
+        'match': match_path,
+        'candidate': evidence_path,
+        'output': output_path,
+    }
+
+
+def test_plan_sections_cli_preset_compact_1page_and_overrides(tmp_path, monkeypatch, capsys):
+    paths = _rich_project_cert_language_artifacts(tmp_path)
+    rc = _run([*_plan_argv(paths), '--preset', 'compact-1page'], tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    plan = ResumeSectionPlan.model_validate_json(paths['output'].read_text(encoding='utf-8'))
+    assert [section.section_id for section in plan.ordered_sections] == [
+        'projects', 'professional-experience', 'certifications', 'languages',
+    ]
+    by_id = {section.section_id: section for section in plan.ordered_sections}
+    assert len(by_id['projects'].entries) == 3
+    assert len(by_id['certifications'].entries) == 6
+    assert len(by_id['languages'].selected_evidence_ids) == 2
+
+    rc_override = _run(
+        [*_plan_argv(paths), '--preset', 'compact-1page', '--max-projects', '4', '--max-certifications', '2'],
+        tmp_path,
+        monkeypatch,
+        capsys,
+    )
+    assert rc_override == 0
+    overridden = ResumeSectionPlan.model_validate_json(paths['output'].read_text(encoding='utf-8'))
+    over_by_id = {section.section_id: section for section in overridden.ordered_sections}
+    assert len(over_by_id['projects'].entries) == 4
+    assert len(over_by_id['certifications'].entries) == 2
+
+
+def test_plan_sections_cli_individual_flags_and_negative_budget(tmp_path, monkeypatch, capsys):
+    paths = _rich_project_cert_language_artifacts(tmp_path)
+    rc = _run(
+        [*_plan_argv(paths), '--projects-first', '--include-languages', '--max-projects', '2'],
+        tmp_path,
+        monkeypatch,
+        capsys,
+    )
+    assert rc == 0
+    plan = ResumeSectionPlan.model_validate_json(paths['output'].read_text(encoding='utf-8'))
+    by_id = {section.section_id: section for section in plan.ordered_sections}
+    assert [section.section_id for section in plan.ordered_sections] == [
+        'projects', 'professional-experience', 'certifications', 'languages',
+    ]
+    assert len(by_id['projects'].entries) == 2
+    assert len(by_id['certifications'].entries) == 5
+
+    rc_invalid = _run(
+        [*_plan_argv(paths), '--max-projects', '-1'],
+        tmp_path,
+        monkeypatch,
+        capsys,
+    )
+    assert rc_invalid == 2

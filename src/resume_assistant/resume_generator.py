@@ -709,13 +709,11 @@ def _build_llm_input(
                 'Selected evidence cannot include identity or contact records.'
             )
 
-    technical_skill_ids = [
+    all_technical_skill_ids = [
         record.evidence_id
         for record in records.values()
         if _is_technical_skill_catalog_record(record)
     ]
-    technical_skill_set = set(technical_skill_ids)
-    available_ids = selected | technical_skill_set
 
     safe_content: dict[str, str] = {}
 
@@ -726,6 +724,26 @@ def _build_llm_input(
                 '' if _record_is_pii_only(record) else _scrub_pii(record.original_content)
             )
         return safe_content[identifier]
+
+    seen_skill_texts: set[str] = {
+        skill_identity(content(identifier))
+        for identifier in all_technical_skill_ids
+        if identifier in selected and content(identifier).strip()
+    }
+    technical_skill_ids: list[str] = []
+    for identifier in all_technical_skill_ids:
+        text = content(identifier).strip()
+        if not text:
+            continue
+        if identifier in selected:
+            technical_skill_ids.append(identifier)
+            continue
+        identity = skill_identity(text)
+        if identity not in seen_skill_texts:
+            seen_skill_texts.add(identity)
+            technical_skill_ids.append(identifier)
+    technical_skill_set = set(technical_skill_ids)
+    available_ids = selected | technical_skill_set
 
     def safe_ids(
         identifiers: Iterable[str], pool: Optional[set[str]] = None
@@ -943,10 +961,13 @@ def _schema_repair_details(error: ValidationError) -> list[dict[str, str]]:
         include_url=False, include_context=False, include_input=False
     )[:20]:
         location = '.'.join(str(part) for part in item.get('loc', ())) or 'payload'
-        details.append({
+        detail = {
             'code': str(item.get('type', 'validation_error')),
             'location': location,
-        })
+        }
+        if item.get('msg'):
+            detail['message'] = str(item['msg'])
+        details.append(detail)
     return details or [{'code': 'validation_error', 'location': 'payload'}]
 
 
@@ -1219,7 +1240,18 @@ def validate_tailored_resume(
                     )
                     continue
             else:
-                allowed = set(planned.matched_evidence_ids) & allowed_skill_evidence
+                catalog_skill_ids = {
+                    identifier
+                    for identifier in item.evidence_ids
+                    if identifier in (technical_skill_ids - selected)
+                    and _skill_grounded_in_evidence(
+                        item.skill_text, (identifier,), records, technical_skill_ids
+                    )
+                }
+                allowed = (
+                    (set(planned.matched_evidence_ids) & allowed_skill_evidence)
+                    | catalog_skill_ids
+                )
                 scope_check(
                     item.evidence_ids,
                     allowed,
@@ -1391,16 +1423,81 @@ def _resolve_payload_aliases(
         ) from None
 
 
-def _validation_repair_details(report: GroundingValidationReport) -> list[dict[str, str]]:
-    details = [
-        {
+def _validation_repair_details(
+    report: GroundingValidationReport,
+    *,
+    payload: Optional[TailoredResumePayload] = None,
+    plan: Optional[ResumeSectionPlan] = None,
+    hydrated: Optional[HydratedGenerationInput] = None,
+) -> list[dict[str, str]]:
+    planned_skills = (
+        {skill_identity(skill.skill_text): skill for skill in plan.prioritized_skills}
+        if plan is not None else {}
+    )
+    planned_order = (
+        [
+            section.section_id
+            for section in plan.ordered_sections
+            if section.section_id not in ('professional-summary', 'technical-skills')
+        ]
+        if plan is not None else []
+    )
+    details = []
+    for finding in report.findings:
+        if finding.severity != 'error':
+            continue
+        message = finding.message
+        if payload is not None and hydrated is not None:
+            if finding.code in (
+                'skill_evidence_out_of_scope',
+                'evidence_not_selected',
+                'skill_not_planned',
+            ):
+                match = re.fullmatch(
+                    r'skill_groups\[(\d+)\]\.skills\[(\d+)\]', finding.location
+                )
+                if match:
+                    gi, si = int(match.group(1)), int(match.group(2))
+                    if gi < len(payload.skill_groups) and si < len(payload.skill_groups[gi].skills):
+                        item = payload.skill_groups[gi].skills[si]
+                        planned = planned_skills.get(skill_identity(item.skill_text))
+                        if planned is not None:
+                            aliases = [
+                                hydrated.evidence_alias_by_id[eid]
+                                for eid in planned.matched_evidence_ids
+                                if eid in hydrated.evidence_alias_by_id
+                            ]
+                            if aliases:
+                                message += f' Use matched_evidence_ids: {aliases}.'
+                        elif finding.code == 'evidence_not_selected':
+                            message += (
+                                ' Cite an existing SK... alias from technical_skills_evidence'
+                                ' or E... alias from ordered_sections whose original_content'
+                                ' verbatim contains skill_text, or omit the skill.'
+                            )
+            elif finding.code == 'entry_evidence_out_of_scope':
+                match = re.fullmatch(
+                    r'sections\[(\d+)\]\.entries\[(\d+)\]\.bullets\[\d+\]',
+                    finding.location,
+                )
+                if match:
+                    si, ei = int(match.group(1)), int(match.group(2))
+                    if si < len(payload.sections) and ei < len(payload.sections[si].entries):
+                        entry = payload.sections[si].entries[ei]
+                        entry_alias = hydrated.entry_alias_by_id.get(
+                            entry.entry_id, entry.entry_id
+                        )
+                        message += (
+                            f' Cite ONLY aliases from {entry_alias}'
+                            ' selected_evidence_ids in ordered_sections.'
+                        )
+            elif finding.code == 'section_order_mismatch' and planned_order:
+                message += f' Emit sections in exact plan order: {planned_order}.'
+        details.append({
             'code': finding.code,
             'location': finding.location,
-            'message': finding.message,
-        }
-        for finding in report.findings
-        if finding.severity == 'error'
-    ]
+            'message': message,
+        })
     return details[:20] or [{'code': 'validation_error', 'location': 'payload'}]
 
 
@@ -1431,8 +1528,12 @@ def _repair_input(original_input: str, details: Iterable[dict[str, str]]) -> str
             'errors': sanitized,
             'repair_guidance': (
                 'Cite ONLY aliases from the exact target entry selected_evidence_ids '
-                'for entry bullets, and copy skill_text verbatim from cited evidence '
-                'or omit any ungrounded skill.'
+                'for entry bullets (never from any other entry), use each supplied '
+                'entry_id at most once (never duplicate or split an entry_id across '
+                'multiple entries), for any skill listed in prioritized_skills cite '
+                'ONLY its exact matched_evidence_ids from prioritized_skills, and for '
+                'supporting skills verify the exact SK... or E... alias whose '
+                'original_content verbatim contains skill_text (or omit the skill).'
             ),
         },
         ensure_ascii=False,
@@ -1454,6 +1555,44 @@ def _requires_repair(report: GroundingValidationReport, strict_metrics: bool) ->
             and any(finding.code == 'ungrounded_metric' for finding in report.findings)
         )
     )
+
+
+def _normalize_language_sections(payload: TailoredResumePayload) -> TailoredResumePayload:
+    '''Ensure languages entries carry no bullet items by folding grounded bullets into title.'''
+    changed = False
+    data = payload.model_dump(mode='python')
+    for section in data['sections']:
+        if section['section_id'] != 'languages':
+            continue
+        for entry in section['entries']:
+            bullets = [
+                bullet['text'].strip()
+                for bullet in entry['bullets']
+                if bullet['text'].strip()
+            ]
+            if not bullets:
+                continue
+            changed = True
+            title = entry['title'].strip()
+            if title.casefold() in ('languages', 'language', 'spoken languages'):
+                entry['title'] = ' · '.join(dict.fromkeys(bullets))
+            elif len(bullets) == 1:
+                detail = bullets[0]
+                if detail.casefold() not in title.casefold():
+                    if title.casefold() in detail.casefold():
+                        entry['title'] = detail
+                    else:
+                        entry['title'] = f'{title} ({detail})'
+            else:
+                merged = [title]
+                for item in bullets:
+                    if item.casefold() not in title.casefold():
+                        merged.append(item)
+                entry['title'] = ' · '.join(dict.fromkeys(merged))
+            entry['bullets'] = []
+    if not changed:
+        return payload
+    return TailoredResumePayload.model_validate(data)
 
 
 class ResumeGenerator:
@@ -1492,7 +1631,19 @@ class ResumeGenerator:
         if _requires_repair(report, self._strict_metrics):
             raise ResumeGenerationError(
                 'Generated resume requires repair.',
-                repair_details=_validation_repair_details(report),
+                repair_details=_validation_repair_details(
+                    report, payload=payload, plan=plan, hydrated=hydrated
+                ),
+            )
+        normalized = _normalize_language_sections(payload)
+        if normalized != payload:
+            payload = normalized
+            report = validate_tailored_resume(
+                payload,
+                plan,
+                catalog,
+                strict_metrics=self._strict_metrics,
+                raise_on_error=True,
             )
         return payload, report
 
