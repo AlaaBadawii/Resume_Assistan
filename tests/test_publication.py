@@ -23,6 +23,7 @@ from pydantic_core import PydanticSerializationError
 from resume_assistant import cli as cli_module
 from resume_assistant import evidence as evidence_module
 from resume_assistant import extractor as extractor_module
+from resume_assistant import publication_reader
 from resume_assistant.job_models import JobDescriptionAnalysis
 from resume_assistant.matching_models import CandidateJobMatch
 from resume_assistant.models import (
@@ -280,6 +281,18 @@ def test_legacy_catalog_still_loadable():
     assert manifest is None
     assert catalog.schema_version == '3.0.0'
     assert len(catalog.evidence_records) == 1
+
+
+@pytest.mark.parametrize('document', [[], None, True, 42, 'SYNTHETIC_PRIVATE_REVIEW_MARKER'])
+def test_committed_pair_reader_rejects_nonobjects_before_manifest_detection(tmp_path, monkeypatch, document):
+    path = tmp_path / 'candidate.json'
+    path.write_text(json.dumps(document), encoding='utf-8')
+    detector = Mock(side_effect=AssertionError('Non-object input must not reach manifest detection.'))
+    monkeypatch.setattr(publication_reader, 'is_manifest_format', detector)
+    with pytest.raises(PublicationError, match='Candidate evidence input must be a JSON object') as caught:
+        load_committed_pair(tmp_path, path)
+    assert 'SYNTHETIC_PRIVATE_REVIEW_MARKER' not in str(caught.value)
+    detector.assert_not_called()
 
 
 def test_publication_pair_source_hash_consistency():

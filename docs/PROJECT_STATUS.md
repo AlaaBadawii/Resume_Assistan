@@ -5,20 +5,24 @@ Google Antigravity) and human reviewers. Update this file at the end of every
 mission. **This is a navigation aid — always verify claims against source
 code (see `AGENTS.md` §A).**
 
-Last updated: 2026-11-20 (Phase 2 aggregate deliverable APPROVED by explicit human decision; Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1 remain APPROVED; individual Phase 2 sub-missions retain historical records; parent Mission 3 remains in progress/not approved).
+Last updated: 2026-11-27 (Stages A–E APPROVED and Mission 3.3 APPROVED at owner closeout 2026-11-25; Phase 4 core evidence-bound JSON/DOCX/PDF generation APPROVED by explicit owner authorization 2026-11-26 (§O); Phase 4.4 (§P) and Phase 5 / 5.1 (§Q — end-to-end cached pipeline orchestrator, loopback Gradio 6.32.0 UI, deterministic `compact_tier` 1-page A4 auto-fit, prompt `v1.6.0` adaptive skills matrix + Unicode-dash/subsection-heading grounding fixes, `_job_slug` boilerplate filtering, visible UI error banners, MIT License, and `.env.example` cleanup) are `IMPLEMENTED — AWAITING REVIEW`, verified by focused tests (`tests/test_pipeline_and_ui.py` + `tests/test_resume_generation.py`: 61 passed) and full authorized regression **1,522 collected / 7 deselected / 1,515 selected / 1,514 passed / 1 skipped (optional `weasyprint` preview test) / 0 failed / 11 existing warnings**; historical approvals and accepted limitations are preserved).
 
 ---
 
 ## A. Project Overview
 
-**Objective.** A local Python application that takes a Job Description and a
-private Master Resume and produces a customized, ATS-friendly PDF resume
-built only from verified candidate evidence. Job Description analysis now
-exists (Mission 3.1: LLM client, quotation-verified structured analyzer,
-`analyze-job` CLI), alongside a deterministic local candidate matcher
-(`match-job`, Missions 3.2 and 3.2.1 approved after remediation/review). Resume generation and
-evidence selection do not exist yet. Current scope is extraction, JD analysis,
-and traceable local textual requirement matching.
+**Objective.** A local Master Resume-driven application that generates
+job-tailored, ATS-friendly resumes from traceable candidate evidence. The
+workflow is implemented through **schema-2 resume section planning** and Phase 4
+core generation: pinned DOCX extraction, quotation-checked JD analysis, local
+component matching, source-derived evidence selection/entry grouping, relevance
+budgets, complete accounting, explicit summary bindings, source-aware validation,
+private atomic publication, and evidence-bound JSON/DOCX/PDF generation. JD
+analysis sends only the supplied JD; generation sends only selected non-contact
+evidence from the approved plan (plus non-PII `technical-skills` catalog
+records). **Phase 4 core evidence-bound JSON/DOCX/PDF generation is APPROVED
+(2026-11-26, §O); template-filling generation remains future work.**
+Stages A–E are owner-approved; Mission 3.3 is APPROVED (2026-11-25).
 
 **Current architecture.**
 
@@ -29,8 +33,9 @@ Master_Resume.docx (private)
     -> DocumentSnapshot (located gaps, actual part ownership + unresolved details)
     -> section detector (heuristic top-level headings)
     -> evidence builder (Pydantic catalog, deterministic IDs)
-    -> data/private/processed/candidate_evidence.json (private artifact)
-    -> data/private/processed/document_snapshot.json (private artifact)
+    -> immutable schema-3.0.0 snapshot/catalog envelopes
+    -> atomic manifest: data/private/processed/candidate_evidence.json
+       (--snapshot-output is compatibility selector metadata, not a separate file)
 
 job_description.txt (private, Mission 3.1)
     -> AgentRouterClient (OpenAI-compatible Responses API, stdlib HTTP)
@@ -42,13 +47,25 @@ job_description_analysis.json + candidate_evidence.json (validated, private)
     -> CandidateJobMatch (match schema 2.0.0, human review required)
     -> data/private/processed/job_candidate_match.json (private artifact)
 
+catalog/snapshot + job analysis + candidate/job match (validated, private)
+    -> approved component selection and coherent source-entry grouping/budgets
+    -> ResumeSectionPlan schema 2.0.0 (provenance + evidence-bound blueprint)
+    -> JSON restoration + SectionPlanner.validate_result(original sources)
+    -> private atomic data/private/processed/resume_section_plan.json
+
+resume_section_plan.json + committed candidate evidence (validated, private)
+    -> deterministic local header (identity/contact records stay local)
+    -> provider generation over selected non-contact evidence only
+    -> strict payload parse + evidence-scope/numeric-grounding validation
+    -> private atomic tailored_resume.json + ATS-safe tailored_resume.docx
+
 src/build_template.py -> templates/resume_template.docx (A4 blank template)
 tests/render_template_pdf.py -> output/resume_template_preview.pdf (approximate preview)
 ```
 
 **Technology stack.** Python 3.12.14 · python-docx ≥1.2,<2 · pydantic ≥2,<3 ·
-pytest ≥9 (dev) · weasyprint ≥70 (optional preview) · no agent frameworks,
-RAG, or vector databases.
+gradio ≥6,<7 · pytest ≥9 (dev) · weasyprint ≥70 (optional preview) · MIT License ·
+no agent frameworks, RAG, or vector databases.
 
 **Local execution environment.** Project-local `.venv/` at the repository
 root. Tests: `.venv/bin/python -m pytest`. Dependency check:
@@ -59,11 +76,11 @@ root. Tests: `.venv/bin/python -m pytest`. Dependency check:
 | Directory | Purpose |
 |---|---|
 | `data/private/` | **NEVER COMMIT** — Master Resume + processed evidence/analysis JSON |
-| `src/resume_assistant/` | extraction + analysis + local matching; model contracts, services, secure artifact I/O, CLI |
+| `src/resume_assistant/` | extraction + analysis + local matching + source-validated planning; strict/legacy contracts, secure artifact I/O, four-command CLI |
 | `src/build_template.py` | template generator (A4 default, `--page-size`) |
-| `tests/` | 897 collected; Mission 2.2.4 full privacy-safe run: 889 passed, 1 skipped, 0 failed, 7 private-source cases deselected, 11 unchanged warnings; 16 new Mission 2.2.4 cases |
+| `tests/` | Latest Stage E authorized run: **1,419 collected, 1,412 passed, 7 documented private-source exclusions, 0 failed, 11 existing warnings**; 99 added Stage E acceptance/integration cases. Historical counts remain in §F/§K–§M. |
 | `templates/` | blank ATS template artifact |
-| `docs/` | design docs, extraction/job-analysis/matching contracts, this status file |
+| `docs/` | extraction/job-analysis/matching/planning contracts, operational README links, this status file |
 | `output/` | generated previews/resumes — ignored except `.gitkeep` |
 | `prompts/` | reserved for future prompt assets (`.gitkeep` only); live prompts live in `src/resume_assistant/prompts.py` |
 | `.env.example` | `AGENTROUTER_*` configuration template — whitelisted in `.gitignore`, contains no secrets |
@@ -95,10 +112,25 @@ mission `APPROVED`; none of the approvals below are fabricated.**
 | 3.2 | Local Candidate Evidence Matcher | `APPROVED` | Original implementation used match schema 1.0.0; its independent read-only review returned **DO NOT APPROVE** (M32-01–M32-11, preserved in §I). Mission 3.2.1 remediated those findings with match schema 2.0.0. Independent review of the corrected implementation returned **APPROVE WITH NON-BLOCKING OBSERVATIONS**, scoped to Missions 3.2/3.2.1; all eleven findings VERIFIED FIXED. Human explicitly confirmed Mission 3.2 as already APPROVED in the Mission 2 finalization-audit assignment (2026-11-18). Observations O-1–O-4 are preserved in §I. Parent Mission 3 remains in progress/not approved. |
 | 3.2.1 | Matching accuracy & evidence integrity remediation | `APPROVED` | M32-01–M32-11 independently VERIFIED FIXED (§I). Method `exact_normalized_phrase_v2`, match output schema 2.0.0; existing input schemas 2.0.0/3.0.0 unchanged. Implementation suite: **705 collected, 698 passed, 7 deselected, 0 failed, 0 skipped, 11 unchanged warnings**; 173 additional cases beyond Mission 3.2. Independent read-only review reproduced those totals (13.00s), confirmed 189 matcher cases and 183 external synthetic probes, and returned **APPROVE WITH NON-BLOCKING OBSERVATIONS**. Guard audited; no real candidate reads or external requests; ten existing synthetic loopback connections in that historical full-suite review. Review observations O-1–O-4 require no correction before approval and remain recorded in §I. Human explicitly confirmed Mission 3.2.1 as already APPROVED in the Mission 2 finalization-audit assignment (2026-11-18); Missions 3.1/3.1.1 approvals remain in force. No parent Mission 2/3 approval is implied. |
 | 3.1.1 | Security, grounding & validation remediation | `APPROVED` | All nine M31 findings remediated: rejected authenticated redirects (real loopback HTTP/TLS tests), source-phrase schema/prompt 2.0.0 with own-evidence checks and explicit AI-unverified classifications, strict completed Responses envelopes, no-follow pinned-directory writes for both commands, strict structure/nonblank/deduplication/conflict/configuration rules, corrected provenance, and controlled regular-file input errors. Verification: **516 collected, 509 passed, 0 failed, 7 private-source cases deselected, 11 legacy warnings**; pip check and git diff --check pass. Eleven additional in-memory removal checks detected safeguard loss. Synthetic data and temporary fixtures only; local loopback requests, no live provider requests, no private contents read. Nothing staged/committed/pushed. Independent review of the remediation: **APPROVE WITH NON-BLOCKING OBSERVATIONS** (all nine findings verified fixed; independent safeguard-removal checks detected 17/17); human approval explicitly granted at the Mission 3.1 closeout (2026-11-17); Mission 3.1.1 is recorded `APPROVED`; Mission 3.1 is `APPROVED`. Live AgentRouter smoke test at closeout: **NOT EXECUTED — runtime credentials unavailable**. |
+| 3.3 | Deterministic Resume Section Planning & Evidence Strategy Planner | `APPROVED` | New `src/resume_assistant/section_planner.py` (schema `1.0.0`) plus `plan-sections` CLI subcommand. Consumes candidate evidence (schema 3.0.0), job description analysis (schema 2.0.0), and candidate job match (schema 2.0.0); produces `resume_section_plan.json`. Selects evidence from existing matcher decisions, organizes ordered output sections, prioritizes required/preferred/other skills, accounts for requirement coverage (reusing matcher statuses), emits an evidence-referenced professional-summary blueprint, and allocates deterministic content budgets. Fully deterministic: no LLM, no RAG, no vector database, no agent framework. Reuses `SectionDetector`, `CandidateEvidenceCatalog`, `JobDescriptionAnalysis`, `CandidateJobMatch`, `load_committed_pair`, `read_artifact_text`, `normalize_output_path`, `PrivateOutput`, and atomic `write_json`. New tests: `tests/test_section_planner.py`, `tests/test_planner_cli.py` (25 cases). Full authorized regression suite: **915 collected, 915 passed, 7 deselected, 0 failed, 11 warnings**; `pip check` and `git diff --check` pass. No private candidate data inspected; synthetic fixtures only. Human-approved at the Mission 3.3 closeout (2026-11-25); parent Mission 3 remains in progress. |
+| 3.3 — Stage A | Input trust boundary, provenance, sanitized errors, strict parsing, and output alias protection (A-01 through A-05), including SA-R01 exit-code correction | `APPROVED` | Explicit project-owner approval stated in the Stage B implementation authorization. Final independent re-review verdict: APPROVE WITH NON-BLOCKING OBSERVATIONS; Stage A ready for human approval. Latest implemented baseline after SA-R01: **1,087 collected, 1,080 passed, 7 documented private-source cases deselected, 0 failed, 11 existing warnings**. Missing explicit/generation inputs return 2; unexpected planner, output-serialization, and publication FileNotFoundError failures return 3. Prior non-blocking smoke-test isolation and minimum-coordinate-validation observations remain recorded in the review. This approval applies only to Stage A; Mission 3.3 was subsequently APPROVED at the owner closeout (2026-11-25). |
+| 3.3 — Stage B | Supported-component skills, conservative deduplication/evidence aggregation, and type-safe background selection (B-01 through B-03) | `APPROVED` | Independent review verdict after F-1/F-2 remediation: **APPROVE WITH NON-BLOCKING OBSERVATIONS**. F-1 (contact-metadata filtering: extended/bare labels and profile URLs excluded; GitHub and GitHub Actions preserved) and F-2 (canonical-heading exclusion with boundaryless/partial snapshots; factual employment/project titles preserved) verified fixed with failing-first regressions. B-01/B-02 verified intact: supported-component skill emission, partial requirement handling, case/whitespace-only deduplication with evidence aggregation, owner-authorized additive `PlannedSkill.requirement_associations`, legacy plan loading, deterministic serialization across hash seeds 1/17/103. Approved by the project owner via explicit conditional authorization in the Stage B final review + Stage C implementation assignment ("This assignment explicitly authorizes Stage B acceptance and Stage C implementation, conditional on the review verdict"). Verification after remediation: planner/CLI 243 passed; SA-R01-focused 70 passed; publication/matcher 220 passed; Stage A/B external acceptance 50 passed; full authorized regression **1,145 collected, 1,138 passed, 7 documented private-source cases deselected, 0 failed, 11 existing warnings**; `pip check` and `git diff --check` pass. Non-blocking observations preserved: **O-1** plan schema stays `1.0.0` (additive `requirement_associations` owner-authorized, unreleased artifact); **O-2** heading-styled factual technical content may be excluded (documented limitation, no heading-policy redesign). This approval applies only to Stage B; Mission 3.3 was subsequently APPROVED at the owner closeout (2026-11-25). |
+| 3.3 — Stage C | Source-derived entry grouping, relevance budgets, source ordering, and complete evidence outcomes (C-01 through C-04) | `APPROVED` | Independent review initially returned **REQUEST CHANGES** for SC-R1 (discarded vertically merged identity rows), SC-R2 (numbering contamination across repeated source sections), and SC-R3 (skill truncation before evidence survival). Focused remediation binds merge-connected rows and nested support using snapshot metadata, resolves numbering within the enclosing section instance, and applies the skill cap after final evidence survival. Ambiguous spans retain no asserted identity and `entry_grouping_complete=False`. Pre-approval implementation status and verification are preserved in §L: 18 added DOCX-backed regressions, 65 Stage C cases, 243 planner/CLI cases, 220 publication/matcher cases, 70 safeguards; authorized regression **1,210 collected, 1,203 passed, 7 documented exclusions, 0 failed, 11 existing warnings**. Final independent review verdict: **APPROVE WITH NON-BLOCKING OBSERVATIONS**; no new blockers, and accepted unmarked/merge-metadata limits, unreleased schema-1 history, and heading-styled technical-content observations were preserved. The project owner explicitly approved Stages A, B, and C and authorized Stage D in the Stage D assignment; Stage C is recorded APPROVED on that authority. Stages A/B historical approvals remain in force. Mission 3.3 was subsequently APPROVED at the owner closeout (2026-11-25). |
+| 3.3 — Stage D | Strict output integrity, source-aware result validation, compact provenance, and evidence-bound blueprint (D-01 through D-04) | `APPROVED` | Output contract schema **2.0.0** has mandatory complete provenance and factual bindings; source-aware `SectionPlanner.validate_result` runs before private publication. Strict types, unambiguous JSON, section/entry/selection/accounting/budget relationships, supported component/parent associations, and blueprint projections are validated. Compact source coordinates/cell provenance and extraction generation hashes are retained without duplicating the resume body. Explicit schema-1 inspection plus validated-source re-planning preserves intentional historical compatibility. Pre-approval results are preserved in §M: 110 new cases; prior planner/CLI/Stage C 308 passed; publication/matcher 220 passed; safeguards 70 passed; all 14 external schema/provenance challenges passed; full external suite 72 passed / 4 accepted assertion failures; authorized regression **1,320 collected, 1,313 passed, 7 documented exclusions, 0 failed, 11 existing warnings**. Independent Stage D review verdict: **APPROVE WITH NON-BLOCKING OBSERVATIONS**; 418 focused cases and six independent source/compatibility challenges passed, with no new external failure class. Approval is recorded under the owner's explicit conditional authorization in the Stage D independent review + Stage E assignment. Existing lexical-support, unavailable-coordinate/generation, unmarked-entry and legacy-inspection observations are preserved. Stage E was authorized and is now APPROVED; Mission 3.3 is APPROVED at the owner closeout (2026-11-25). |
+| 3.3 — Stage E | Managed end-to-end integration, portable acceptance, contract compatibility, operational documentation and final verification (E-01 through E-05) | `APPROVED` | Conditional Stage D review passed and owner-authorized approval was recorded before Stage E work. Real four-command synthetic DOCX/JD workflow now has 23 managed integration cases with Responses-envelope/analyzer validation through an offline transport, plus the portable 76-case independent acceptance matrix. The matching CLI protects consumed generation catalog/snapshot aliases before matching and immediately before publication, preserving existing errors and schemas. README and extraction/analysis/matching/planning docs describe the actual workflow and Phase 4 boundary. All 99 added cases pass; prior planner/CLI/A–D 418 pass; publication/matcher 220 pass; safeguards 70 pass. Final authorized regression: **1,419 collected, 1,412 passed, 7 documented private-source cases deselected, 0 failed, 11 existing warnings**. Stage E is APPROVED and Mission 3.3 is APPROVED at the owner closeout (2026-11-25); Phase 4 had not begun at that closeout. |
+| 4 — core vertical slice | Evidence-bound tailored-resume JSON, ATS-safe single-column DOCX, and optional LibreOffice-converted PDF generation from a schema-2 plan plus committed candidate evidence | `APPROVED` | Adds strict generation schema 1.0.0, deterministic local header, selected-only provider input (plus non-PII `technical-skills` catalog records with distinct `SK1..SKn` aliases for `skill_groups`), hard evidence-scope/order/heading validation, numeric-grounding warnings with optional strict failure, `generate-resume` CLI (JSON + `--output-docx` and/or `--output-pdf`, mode 0600), multi-provider `llm_client` (`responses`, `chat_completions`, `gemini`), and 48 offline generation tests (plus 176 tests in `test_llm_client.py`). `--output-pdf` converts rendered DOCX via headless LibreOffice (`soffice`/`libreoffice` from optional `libreoffice-writer`, 60s timeout) with zero new Python dependencies and enforces the `data/private/processed/` output boundary. Header extraction covers header-relevant records (`professional-identity`, `CONTACT`, `IDENTITY`, preamble/unclassified) plus snapshot headers/footers while blocking non-header section hyperlinks, deduplicates `mailto:`, strips verbose prefixes, and renders a 2-line contact header with compact URL display text and preserved `https://` hyperlink targets. Phase 4.3 executive single-column DOCX/PDF layout uses `0.45 in` top/bottom and `0.5 in` left/right margins, `9.5pt` body, `10pt` uppercase headings with bottom borders (`w:pBdr`), inline `Category: Skill 1 · Skill 2` skill groups, right-aligned tab-stop dates, and no `tech_stack` header dumps. Prompt v1.5.0 specifies dense ATS skills (`35–55` keywords), quantified metric preservation, headline seniority grounding, date-evidence grounding (`selected_evidence_ids`), and overlap condensation, with non-PII `repair_guidance` in retries. Live Stage 1–5 `v1.5.0` PDF-only verification (`gemini-3.5-flash-lite`, prior to final headline-seniority/date-evidence text tweak) exited `0`: `traceability_verified: True`, 0 errors, 1 `ungrounded_metric` warning at `sections[3].entries[2].dates`, 43,994-byte 2-page `%PDF-`, 33 skills across 4 categories, and metrics `85%`/`130/130`/`87.9%`/`40+` preserved. Full authorized regression: **1,502 collected, 1,495 selected, 1,494 passed, 1 skipped (optional `weasyprint` preview test), 7 documented private-source exclusions, 0 failed, 11 existing warnings**. Explicitly approved by the project owner (2026-11-26); template-filling generation remains future work (§O). |
+| 4.4 — compact 1-page budgets & ranking | Configurable section planning budgets, `--preset compact-1page`, primary-project tiering, certification parent-program diversity, inline `languages`, metadata-only experience support, non-wrapping `Education` date lines, and 1-page A4 PDF rendering | `IMPLEMENTED — AWAITING REVIEW` | Backward-compatible `plan-sections` flags (`--max-projects`, `--max-certifications`, `--projects-first`, `--include-languages`, `--preset compact-1page`), `@model_serializer` on `PlanBudgets` omitting default extension fields for legacy compatibility, primary-vs-secondary (`additional`/`archive`) project tiering, certification parent-program diversity capping (`<= 1` sub-course when parent selected, `<= 2` total per program), single inline `languages` section rendering (`bullets: []`), metadata-only `professional-experience` timeline support (`bullets: []`), compact non-wrapping `Education` date lines, deduplicated `SK...` catalog + alias-only repair hints in `resume_generator.py`, and compact executive 1-page DOCX/PDF layout (`0.38 in` top/bottom margins, `9.0pt` body/bullets, `1.05`–`1.06` line spacing). Live Stage 4–5 `compact-1page` A4 run (`gemini-3.5-flash-lite`, `v1.5.0`) exited `0`: 3 flagship projects (`[4, 4, 3]` bullets), 3 experience entries (`[3, 0, 2]` bullets), 1 education, 6 certifications, 1 languages line, 36 skill items, `traceability_verified: True` (0 errors / 1 `ungrounded_metric` warning at `summary_sentences[1]`), metrics `85%`/`130/130`/`87.9%`/`40+` preserved, and `42,467`-byte **1-page** A4 `%PDF-`. Focused tests (`test_section_planner.py` + `test_resume_generation.py`): **168 passed** (`116` + `52`); full authorized regression: **1,513 collected / 7 deselected / 1,506 selected / 1,505 passed / 1 skipped / 0 failed / 11 warnings** (§P). |
 
 ---
 
 ## C. Current Implementation
+
+**Historical count clarification (M33-13):** The original Mission 3.3 row above
+preserves the original agent claim of 915 collected / 915 passed / 7 deselected.
+The independent baseline reproduction in the remediation plan was **922
+collected / 915 passed / 7 deselected**; the original counting claim was
+inaccurate. Current authoritative totals are the Stage E results in §N. Historical
+approval/rejection states and their provenance have not been rewritten.
 
 | Component | Location | Responsibility |
 |---|---|---|
@@ -108,24 +140,31 @@ mission `APPROVED`; none of the approvals below are fabricated.**
 | Section detector | `src/resume_assistant/section_detector.py` | Heuristic top-level section detection (bold/size/numbering signals); 14 sections detected on the Master Resume. |
 | Evidence builder | `src/resume_assistant/evidence.py` | Maps blocks → `EvidenceRecord`s with deterministic SHA-256 IDs and provenance; builds `CandidateEvidenceCatalog`. **Known defects — see §D.** |
 | Data models | `src/resume_assistant/models.py` | Schema 3.0.0 retained; optional located gaps, detailed completeness diagnostics, block locations, and header/footer part/reference metadata; existing fields and completeness formulas preserved. |
-| CLI | `src/resume_assistant/cli.py`, `__main__.py` | `extract-master`, `analyze-job`, and offline `match-job`; validated private artifacts and aggregate-only summaries. |
-| LLM client | `src/resume_assistant/llm_client.py` | Stdlib Responses transport with structural URL/finite-timeout validation, rejected redirects, required completed envelope, refusal/malformed-content rejection, and sanitized errors. HTTP is limited to numeric loopback endpoints; live provider contract remains unverified. |
+| CLI | `src/resume_assistant/cli.py`, `__main__.py` | `extract-master`, `analyze-job`, offline `match-job`, `plan-sections` (with optional Phase 4.4 `--max-projects`, `--max-certifications`, `--projects-first`, `--include-languages`, `--preset compact-1page`), and `generate-resume`; validated private artifacts, consumed-input alias protection, aggregate-only summaries. |
+| LLM client | `src/resume_assistant/llm_client.py` | Multi-provider stdlib HTTP client (`responses`, `chat_completions`, `gemini`) with structural URL/finite-timeout validation, rejected redirects, strict envelope validation, refusal/block rejection, and sanitized errors (`x-goog-api-key` header for Gemini, Bearer auth for Responses/Chat Completions). HTTP is limited to numeric loopback endpoints. |
 | Job analysis models & prompt | `src/resume_assistant/job_models.py`, `src/resume_assistant/prompts.py` | Strict `JobDescriptionPayload` / `JobDescriptionAnalysis`, schema/prompt 2.0.0: cited scalars and source phrases, exact classification context, explicit uncertain skills, identical-item deduplication, conflict rejection, and application-owned AI-unverified metadata. |
 | Job analyzer | `src/resume_assistant/job_analyzer.py` | Strict JSON parse → Pydantic required-key/own-evidence validation → check every quotation/context against the original JD → canonical artifact. Textual checks are not semantic entailment or complete extraction; no candidate data is injected. |
-| Private output | `src/resume_assistant/private_output.py` | All CLI artifact outputs pin no-follow directory handles before processing; exclusive mode-0600 temporary creation, identity checks, and descriptor-relative atomic replacement/cleanup. Facility implementation unchanged in Mission 3.2.1. |
+| Private output | `src/resume_assistant/private_output.py` | All CLI artifact outputs pin no-follow directory handles before processing; exclusive mode-0600 temporary creation, identity checks, and descriptor-relative atomic replacement/cleanup. Phase 4 adds an additive `write_bytes` path for DOCX bytes; existing JSON behavior is unchanged. |
 | Local matcher and output models | `src/resume_assistant/matching.py`, `matching_models.py` | Boundary-aware phrases, standalone skill compounds, same-record language levels, actual-record coverage, source-derived unique requirement IDs, compact location/cell provenance, strict statuses, and source-validated JSON. Match schema 2.0.0; human review always required. |
 | Artifact input reader | `src/resume_assistant/private_input.py` | Shared pinned no-follow regular-file byte capture for DOCX and matching artifacts; immutable source filename/bytes/digest; traversal/symlink/change rejection and sanitized input errors. |
 | Structural coverage | `src/resume_assistant/document_coverage.py` | Parsed-document-only inventory: actual default/first/even relationships, linked ownership, unique part URIs, located unsupported inline/table/part diagnostics, conservative unavailable inventory state. |
 | Preview renderer | `tests/render_template_pdf.py` | Approximate WeasyPrint preview; reads page size/margins from the DOCX; writes `output/resume_template_preview.pdf`. Not Word-faithful. |
-| Test suite | `tests/` (22 test modules + `fixtures/`) | 812 collected / 805 passed / 0 failed / 0 skipped / 7 deselected / 11 warnings in Mission 2.2.1. 107 new capture/privacy/coverage/ownership/compatibility regressions; existing 189 matcher cases and all other enabled regressions pass. |
+| Resume planning/output contract | `section_planner.py`, `section_plan.py`, `legacy_section_plan.py` | Approved deterministic selection and schema-2 strict/source-aware output, compact provenance, evidence-bound blueprint, explicit legacy inspection/re-planning, plus Phase 4.4 configurable budgets/`--preset compact-1page`, `languages` opt-in, primary-project tiering, and certification parent-program diversity. |
+| Generation models & prompt | `generation_models.py`, `prompts.py` | Strict generation schema 1.0.0 payload/artifact/report models and the Phase 4 (`v1.5.0`) prompt contract (including inline `languages`, individual `certifications`, and metadata-only timeline `bullets: []` rules). |
+| Resume generator | `resume_generator.py` | Source/provenance re-verification, deterministic local header, selected-only provider input (`E...` + deduplicated `SK1..SKn` skill catalog aliases), strict payload parsing, hard evidence-scope/order/heading checks, grounded catalog fallback for planned skills, alias-only repair hints, post-validation `languages` bullet folding, and numeric-grounding warnings/strict mode. Never claims semantic entailment. |
+| DOCX & PDF renderer | `docx_renderer.py` | Compact 1-page executive single-column DOCX bytes (`0.38 in` top/bottom / `0.5 in` left/right margins, `9.0pt` body/bullets, `1.05`–`1.06` line spacing, `9.5pt` uppercase headings with `w:pBdr`, no tables/images/header/footer content, 2-line contact header, inline `Category: Skill 1 · Skill 2` groups, inline `LANGUAGES` line, non-wrapping month-abbreviated/font-fitted `Education` dates, right-aligned tab-stop dates, compact Education/Certifications, A4/Letter page sizes) plus `render_resume_pdf` via optional headless LibreOffice (`libreoffice-writer`, mode `0600`). |
+| Test suite | `tests/` + `fixtures/` | Latest authorized Stage E result: **1,419 collected / 1,412 passed / 7 private-source exclusions / 0 failed / 11 existing warnings**; Phase 4 + 4.4 add `test_llm_client.py` (`176`), `tests/test_resume_generation.py` (`52`), and new `tests/test_section_planner.py` (`116`) + `tests/test_planner_cli.py` (`134`) cases; latest combined run **1,513 collected / 7 deselected / 1,506 selected / 1,505 passed / 1 skipped (optional `weasyprint` preview test) / 0 failed / 11 warnings**. |
 | Engineering instructions | `AGENTS.md` | Shared agent rules (onboarding, env, privacy, standards, missions, Git). |
-| Design docs | `docs/template_design.md`, `docs/extraction.md`, `docs/job_analysis.md`, `docs/matching.md` | Template, extraction, JD analysis, and matching architecture/contracts/limitations. |
+| Design/operations docs | `README.md`, `docs/template_design.md`, `docs/extraction.md`, `docs/job_analysis.md`, `docs/matching.md`, `docs/planning.md` | Owner workflow, artifact roles/versions, private use, inspection/migration, implemented limitations and later Phase 4 boundary. |
 
 Default private locations (never committed; real contents not inspected in Mission 3.2.1):
 `data/private/Master_Resume.docx`, `data/private/processed/candidate_evidence.json`,
 `data/private/processed/document_snapshot.json`,
 `data/private/processed/job_description_analysis.json`,
-`data/private/processed/job_candidate_match.json`.
+`data/private/processed/job_candidate_match.json`,
+`data/private/processed/resume_section_plan.json`,
+`data/private/processed/tailored_resume.json`,
+`data/private/processed/tailored_resume.docx`.
 
 ---
 
@@ -223,6 +262,106 @@ against source during Mission 1.3 inspection.)
 
 ## E. Current Stopping Point
 
+- **Phase 4.4 (`IMPLEMENTED — AWAITING REVIEW`, 2026-11-27)** extends
+  section planning and compact PDF rendering while preserving **Phase 4 core
+  (`APPROVED`, 2026-11-26)** and all Stages A–E invariants (§P):
+  - `plan-sections` adds `--max-projects`, `--max-certifications`,
+    `--projects-first`, `--include-languages`, and `--preset compact-1page`
+    (`max_projects=3`, `max_certifications=6`, `projects_first=True`,
+    `include_languages=True`, `max_output_sections=7`), keeping defaults
+    backward-compatible via `@model_serializer` on `PlanBudgets`.
+  - `section_planner.py` adds generic primary-vs-secondary (`additional` /
+    `archive`) project tiering and certification parent-program diversity
+    capping (`<= 1` sub-course when parent selected, `<= 2` total per program).
+  - `prompts.py`, `resume_generator.py`, and `docx_renderer.py` add inline
+    `languages` rendering (`bullets: []`), metadata-only timeline experience
+    (`bullets: []`), non-wrapping month-abbreviated/font-fitted `Education`
+    dates, deduplicated `SK...` catalog + grounded catalog fallback + alias-only
+    repair hints, and compact 1-page A4 spacing (`0.38 in` top/bottom margins,
+    `9.0pt` body/bullets, `1.05`–`1.06` line spacing).
+  - Live `first_live_run` (`compact-1page`, A4, `gemini-3.5-flash-lite`,
+    `v1.5.0`): `traceability_verified: True` (0 errors / 1 `ungrounded_metric`
+    warning at `summary_sentences[1]`), 3 flagship projects (`[4, 4, 3]` bullets),
+    3 experience entries (`[3, 0, 2]` bullets), 1 education, 6 certifications,
+    1 languages line, 36 skills, metrics `85%`/`130/130`/`87.9%`/`40+` preserved,
+    and `42,467`-byte **1-page** `%PDF-`.
+  - Focused tests (`test_section_planner.py` + `test_resume_generation.py`):
+    **168 passed**; full authorized regression: **1,513 collected / 7 deselected /
+    1,506 selected / 1,505 passed / 1 skipped (optional `weasyprint` preview
+    test) / 0 failed / 11 existing warnings**.
+
+- **Phase 4 core vertical slice is `APPROVED` (2026-11-26).**
+  `generate-resume` produces a validated, evidence-bound tailored-resume JSON
+  artifact, an ATS-safe single-column DOCX, and an optional LibreOffice-converted
+  PDF (`--output-pdf`, requiring optional `libreoffice-writer` system package)
+  from a schema-2 plan plus committed candidate evidence (§O). The deterministic
+  header stays local; the provider request contains selected non-contact
+  evidence (`E...`) plus non-PII `technical-skills` catalog records (`SK1..SKn`
+  aliases) only. Implemented passes cover multi-provider stdlib transport
+  (`responses`, `chat_completions`, `gemini`), 2-line contact header with
+  `mailto:` deduplication and compact URL display preserving external hyperlinks,
+  Phase 4.3 executive DOCX/PDF layout (`0.45 in`/`0.5 in` margins, `9.5pt` body,
+  `10pt` uppercase headings with `w:pBdr`, inline `Category: Skill 1 · Skill 2`
+  skill groups, right-aligned tab-stop dates, no `tech_stack` header dumps),
+  compact non-bullet Education/Certifications, prompt `v1.5.0` (dense ATS skills
+  `35–55` keywords, quantified metric preservation, headline seniority and
+  date-evidence guardrails, overlap condensation), non-PII `repair_guidance`,
+  and `--output-pdf`. Live Stage 1–5 `v1.5.0` PDF-only verification (prior to the
+  final headline-seniority/date-evidence prompt text addition) passed
+  (`gemini-3.5-flash-lite`, `traceability_verified: True`, 0 errors /
+  1 `ungrounded_metric` warning at `sections[3].entries[2].dates`, 43,994-byte
+  2-page `%PDF-`, 33 skills across 4 categories, metrics `85%`/`130/130`/
+  `87.9%`/`40+` preserved). Full authorized synthetic regression: 1,502
+  collected / 1,495 selected / 1,494 passed / 1 skipped (optional `weasyprint`
+  preview test) / 7 documented private-source exclusions / 0 failed / 11
+  existing warnings. **Owner-approved (2026-11-26)**; template-filling generation
+  remains future work.
+
+- **Mission 3.3 remediation — Stage E is `APPROVED` (owner closeout 2026-11-25).**
+  Stages A–E are APPROVED and Mission 3.3 is APPROVED. The final integrated
+  workflow, 76-case portable independent acceptance matrix, 23 full managed
+  pipeline cases and current documentation are complete (§N). Final authorized
+  run: 1,419 collected / 1,412 passed / 7 documented private-source exclusions /
+  0 failed / 11 existing warnings. No prior test cases were modified or weakened
+  during Stage E. Phase 4 core generation was subsequently implemented and
+  awaits review (§O).
+
+- **Mission 3.3 remediation — Stage A is `APPROVED`** by explicit project-owner decision in the Stage B authorization, following the final SA-R01 independent re-review. The original Mission 3.3 implementation entry above is retained as historical evidence, including its historical test-count claim; the current verified Stage A baseline is 1,087 collected / 1,080 passed / 7 private-source exclusions / 11 warnings. Mission 3.3 is APPROVED (owner closeout 2026-11-25); parent Mission 3 remains in progress.
+- **Mission 3.3 remediation — Stage B is `APPROVED`** by the project owner via
+  explicit conditional authorization in the Stage B final review + Stage C
+  implementation assignment, recorded after an independent review verdict of
+  **APPROVE WITH NON-BLOCKING OBSERVATIONS** (F-1/F-2 verified fixed; B-01/B-02
+  and Stage A guarantees verified intact; full authorized regression 1,145
+  collected / 1,138 passed / 7 exclusions / 11 warnings). Non-blocking
+  observations preserved: plan schema remains `1.0.0` (owner-authorized
+  additive `requirement_associations`), and heading-styled factual technical
+  content may be excluded (documented limitation). The approved Stage B
+  selection semantics are preserved by Stage C's verified implementation.
+  Broader output-schema and per-evidence plan-provenance work remains deferred.
+  No Stage C approval was implied at that time; Mission 3.3 was subsequently
+  APPROVED at the owner closeout (2026-11-25).
+- **Mission 3.3 remediation — Stage C is `APPROVED`** by explicit owner approval
+  in the Stage D assignment, following the final independent verdict
+  **APPROVE WITH NON-BLOCKING OBSERVATIONS** (§L). The SC-R1/SC-R2/SC-R3
+  corrections and their pre-approval verification remain preserved below.
+  Merge-connected identity/supporting rows are retained together, repeated
+  sections use their enclosing numbering, and surviving skill candidates fill
+  available budget slots. Unmarked/ambiguous sources remain explicitly
+  unresolved. Latest authorized regression: 1,210 collected / 1,203 passed /
+  7 exclusions / 11 existing warnings. Three remediation files changed:
+  `section_planner.py`, `test_section_planner_stage_c.py`, and this handoff.
+  No existing tests were weakened or removed; approved Stage A/B files are
+  preserved. Stages D and E were subsequently approved; Mission 3.3 is
+  APPROVED at the owner closeout (2026-11-25).
+- **Mission 3.3 remediation — Stage D is `APPROVED`** under the owner's explicit
+  conditional authorization in the Stage D review + Stage E assignment, after
+  an independent **APPROVE WITH NON-BLOCKING OBSERVATIONS** verdict.
+  The schema-2 contract and source-aware publication boundary are complete (§M).
+  Latest full regression: 1,320 collected / 1,313 passed / 7 documented exclusions /
+  0 failed / 11 existing warnings. All 14 assigned external schema/provenance
+  failures are resolved. Earlier A/B/C approvals and selection behavior are
+  preserved. Stage E and Mission 3.3 are APPROVED (owner closeout 2026-11-25).
+- **Stage B selection limitations preserved:** only conservative single-token technical background labels become standalone "other" skills; multiword/compound/prose records remain source evidence and become prioritized labels only through supported matcher components. Association evidence IDs retain matcher decisions, whose first-witness lexical behavior is unchanged; eligible atomic background duplicates contribute additional overall skill evidence IDs. Heading filtering uses snapshot source boundaries or recorded heading metadata/canonical legacy section identifiers, not a new upstream classification. Stage C now supplies source grouping, relevance budgets, ordering, accounting, and identity binding; unmarked-entry inference and broader output validation remain documented limitations.
 - **Mission 1.2** has been implemented according to its engineering report;
   independent review is pending.
 - **Phase 2 (Candidate Intelligence & Evidence Extraction)** is **`APPROVED`**
@@ -702,3 +841,756 @@ Historical stopping point: stopped for independent read-only review; subsequentl
 - Nothing staged, committed, or pushed.
 
 Independent reviews for Mission 2.2.4 and the Phase 2 Comprehensive Engineering Review both completed with verdicts of APPROVE WITH NON-BLOCKING OBSERVATIONS. Phase 2 as an aggregate deliverable was granted explicit human approval by the project owner (2026-11-20). Mission 2.1.2 and Missions 3.1, 3.1.1, 3.2, and 3.2.1 remain APPROVED; parent Mission 3 remains in progress. Ready for Phase 3 remaining-scope planning.
+
+---
+
+## L. Mission 3.3 — Stage C implementation and independent-review handoff
+
+**Status: IMPLEMENTED — AWAITING INDEPENDENT REVIEW.** Stage B was accepted
+under the assignment's explicit project-owner conditional authorization after
+an **APPROVE WITH NON-BLOCKING OBSERVATIONS** verdict. O-1 (unreleased plan
+schema `1.0.0`) and O-2 (heading-styled technical factual content may be
+excluded) are preserved. Stage A remains approved. Stage C, Mission 3.3,
+and parent Mission 3 have not been approved by this implementation.
+
+The subsequent independent review returned **REQUEST CHANGES** for
+SC-R1/SC-R2/SC-R3. The focused corrections and their latest verification are
+recorded below; the initial pre-review test results are retained as history.
+
+### Implemented behavior and metadata boundary
+
+- **C-01:** Grouping uses recorded heading levels, or source-numbered child
+  headings whose parent number and fully bold runs are available in the
+  snapshot. Same-level headings delimit entries; lower-level content,
+  supporting paragraphs, tables, and their nested rows stay with the entry.
+  Table-only spans use actual row coordinates, parent-row ancestry, and
+  snapshot vertical-merge links. Repeated source sections are distinguished
+  using their enclosing boundaries and recorded heading/numbering.
+  Source-section changes never merge entries. Original identity evidence IDs
+  and all selected supporting record IDs are retained in `PlannedSection.entries`.
+- **C-01 remaining dependency:** Arbitrary prose, bold-only catalog flags,
+  partial-bold numbered headings, and missing parent rows do not establish
+  reliable role/project boundaries. Inference for those inputs is stopped;
+  the affected source span is retained as one indivisible
+  `unresolved_source_span`, with no asserted identity and
+  `entry_grouping_complete=False`. It consumes one conservative source-group
+  slot, not a claimed count of underlying roles. Accurate entry counts for
+  unmarked sources require an explicitly authorized upstream boundary contract.
+- **C-02:** Required skill evidence precedes preferred, then other matcher
+  relevance, then eligible background. Source groups are built and ranked
+  before budgets are applied; surviving records are restored to source order.
+  Nonempty sections are relevance-ranked
+  for `max_output_sections`, with fixed output order as the tie-break and final
+  presentation order. `max_education_entries` defaults to 5 independently of
+  certifications. A one-page target halves positive content caps (minimum 1);
+  zero budgets stay zero. Configured budgets remain in `plan.budgets`, and each
+  section reports its effective cap. `item_count` counts evidence records;
+  entry budgets count indivisible source groups. The planner rejects a requested
+  page guarantee and always produces `page_guarantee=False`. The final skill cap
+  is applied to deduplicated, relevance-ordered candidates only after evidence
+  and entry/section selection, allowing surviving candidates to fill the slots.
+- **C-03:** Ordering uses body/paragraph coordinates, table ancestry/row/cell/
+  paragraph-in-cell coordinates, document part, and only then evidence ID.
+  The approved extractor's negative nested-table IDs are ordered in their
+  recorded preorder. No dates or chronology are inferred.
+- **C-04:** Every record has exactly one selected/excluded outcome. Existing
+  unclassified/unmapped reason codes are retained; eligibility failures use
+  `content_not_eligible_for_output_section`, content-budget drops use
+  `content_budget_exhausted`, and section-cap drops use
+  `output_section_budget_exhausted`. Empty sections are omitted, including
+  sections emptied by filtering or zero budgets. The legacy `dropped_empty`
+  field remains defaulted but is always false on emitted sections. Source
+  references are recomputed from surviving records. Producer accounting checks
+  and the new entry membership contract enforce consistency.
+- Narrow M33-09 identity binding uses selected `PROFESSIONAL_SUMMARY` records.
+  New entry fields and the education budget are legacy-defaulted under plan
+  schema `1.0.0`; extraction `3.0.0`, job `2.0.0`, and match `2.0.0` are preserved.
+
+### Initial verification results (before the independent Stage C review)
+
+All fixtures are synthetic. New cases live in
+`tests/test_section_planner_stage_c.py`; the existing 243 planner/CLI cases
+are retained. Two existing assertions now require omission instead of an
+empty-section placeholder. No test functions or parameter cases were removed.
+An initial challenge run against the unfinished implementation failed all
+11 selected cases before the fixes.
+
+| Run | Actual result |
+|---|---|
+| Stage C focused module | **47 passed**, 0 failed |
+| Planner + CLI regression | **243 passed**, 0 failed |
+| Publication + all three matcher test modules | **220 passed**, 0 failed |
+| Stage B / SA-R01 / unexpected-failure / atomic-replace safeguards | **70 passed, 173 deselected**, 0 failed |
+| Unmodified external Stage A/B subset | **46 passed, 1 failed, 29 deselected**; the failure is the empty-section assumption described below |
+| Complete unmodified external advisory suite | **76 collected, 58 passed, 18 failed**; all failures accounted for below |
+| Authorized full repository regression | **1,192 collected, 1,185 passed, 7 deselected, 0 failed, 11 existing warnings** (37.53s) |
+| Dedicated hash-seed checks (Stage B, Stage C, external control) | **3 passed, 231 deselected**; seeds **1/17/103** and repeated-run equality pass |
+| Dependency / whitespace checks | `pip check`: **No broken requirements found**; tracked and untracked diff whitespace checks pass |
+
+**External suite limitations are not reported as passing:**
+
+1. Thirteen `test_output_schema_rejects_invalid_states` cases and
+   `test_selected_evidence_keeps_compact_source_provenance` remain deferred
+   output-schema/provenance work under the assignment's Stage D boundary.
+2. Three `test_control_simple_numeric_record_budgets` cases supply eight
+   unmarked paragraphs and demand exactly two records. That legacy flat-record
+   cap cannot establish actual resume-entry boundaries. These sources remain
+   explicitly unresolved and indivisible; the missing metadata dependency is
+   exposed rather than inventing eight entries.
+3. `test_contact_is_not_selected_as_technical_content` fails at its `next()`
+   lookup because it requires an empty Technical Skills section to exist.
+   C-04 requires that section to be omitted. The contact record is excluded;
+   the new filtered-empty tests and the existing Stage B contact cases verify
+   the required behavior. The external file was not edited or patched.
+
+**Privacy and Git verification:** The audited external guard recorded zero
+real-private accesses, external-network attempts, repository writes, and
+outside-temporary writes in every run. The full suite's 10 loopback connections
+belong to the existing authorized synthetic transport tests. New planner paths
+make no network or LLM calls. Synthetic CLI outputs retain mode 0600 and preserve
+source and input artifact bytes. No `.env`, real private contents, dependencies,
+or virtual-environment files were modified. Stage A implementation-file hashes
+(`cli.py`, `private_input.py`, `publication_reader.py`), evidence-builder and
+publication-test hashes, and `test_planner_cli.py` match the approved starting
+baseline. No staging, commits, pushes, branch switches, resets, or cleaning.
+
+**Exact full authorized command:**
+
+```bash
+env -u AGENTROUTER_API_KEY -u AGENTROUTER_BASE_URL \
+  -u AGENTROUTER_MODEL -u AGENTROUTER_TIMEOUT_SECONDS \
+  PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  PYTEST_ADDOPTS='' GIT_OPTIONAL_LOCKS=0 TMPDIR=/tmp/opencode \
+  PYTHONPATH=/tmp/opencode/stage-a-trust-boundary \
+  .venv/bin/python -B -m pytest -p no:cacheprovider \
+  --basetemp=/tmp/opencode/stage-c-full-authorized tests \
+  --deselect=tests/test_evidence.py::test_evidence_ids_are_deterministic \
+  --deselect=tests/test_evidence.py::test_catalog_pydantic_round_trip \
+  --deselect=tests/test_extractor.py::test_extraction_does_not_modify_source \
+  --deselect=tests/test_extractor.py::test_numbering_resolution_from_numbering_xml \
+  --deselect=tests/test_section_detector.py::test_master_resume_top_level_section_count \
+  --deselect=tests/test_section_detector.py::test_unclassified_blocks_for_preamble \
+  --deselect=tests/test_template.py::test_master_resume_untouched
+```
+
+The same environment and guard were used for focused, regression, external,
+and determinism runs, each with its own external `--basetemp`. In that initial
+implementation the only new workspace file was the Stage C test module.
+Awaiting independent review;
+unmarked-entry inference remains an explicit metadata dependency, and broader
+output validation/provenance remains unimplemented.
+
+### Focused remediation — SC-R1, SC-R2, SC-R3 (2026-11-24)
+
+**Status: IMPLEMENTED — AWAITING INDEPENDENT REVIEW.** Scope is limited to
+`section_planner.py`, `test_section_planner_stage_c.py`, and this Stage C handoff.
+No Stage C or Mission 3.3 approval is recorded.
+
+| Finding | Root cause and correction |
+|---|---|
+| SC-R1 HIGH | Row-only grouping ignored `TableCell.v_merge` dependencies. Snapshot `restart`/`continue` cells now connect rows through recorded logical cell ranges (`grid_span`), retaining the origin row and all supporting/nested rows as one budget unit. Ordinary adjacent rows remain separate. Orphan continuations, ambiguous/ragged alignments, multiple origins, and unavailable/ineligible origin evidence produce an intact unresolved span with no asserted identity and incomplete grouping. |
+| SC-R2 MEDIUM | Numbering was collected from all sections with the same identifier. Runs now resolve their enclosing, bounded source-section instance and split at instance changes even when a legacy catalog omits structural heading records. Only that instance's numbering and its recorded heading contribute the parent number. Existing heading and child-boundary detectors are unchanged. |
+| SC-R3 MEDIUM | Skills were capped before evidence survival, leaving vacancies after dropped roles. Relevance-ordered, deduplicated skill candidates now survive until evidence/entry/section selection is complete; candidates without surviving support are filtered first, then the final skill cap is applied. The demonstrated cross-budget case yields Python and SQL, excluding Go. Requirement associations, aggregated evidence, primary parent IDs, and matcher coverage remain intact. |
+
+**New regressions:** 18 synthetic DOCX-backed cases were added without changing
+existing cases. They cover the required merged role identity/Python support
+scenario across all four entry categories; nested support; ordinary rows;
+grid-spanned merges; orphan, ragged, multi-origin, and filtered-identity cases;
+independently numbered sections 1 and 4; legacy structural-heading omission;
+Python/Go/SQL skill refill; aggregated evidence/associations; and combined
+repeated-run/hash-seed stability. All ordinary extraction inputs pass the
+existing snapshot/catalog/pair validators. The two deliberately partial legacy
+catalog cases explicitly verify managed-pair rejection while preserving the
+approved sufficient-provenance service path. Seven selected critical cases
+failed before implementation, confirming all three original defects.
+
+| Verification | Actual result |
+|---|---|
+| New SC-R remediation cases | **18 passed, 47 deselected** |
+| All Stage C tests | **65 passed** |
+| Existing planner/CLI tests | **243 passed** |
+| Stage A/B + SA-R01/exception/atomic-replace safeguards | **70 passed, 173 deselected** |
+| Publication + matcher regressions | **220 passed** |
+| Complete unmodified external adversarial suite | **76 collected, 58 passed, 18 failed** |
+| External Stage A/B subset | **46 passed, 1 failed, 29 deselected** |
+| Applicable named positive controls | **13 passed, 63 deselected**; legacy paragraph-count controls are accounted for in the full external result |
+| Full authorized regression | **1,210 collected, 1,203 passed, 7 documented exclusions, 0 failed, 11 unchanged warnings** (62.86s) |
+| Dedicated repeated/hash-seed checks | **4 passed, 248 deselected**; seeds **1/17/103** and repeated byte equality pass, including merged/repeated-section/refill paths |
+| Dependency/whitespace checks | `pip check`: **No broken requirements found**; tracked/untracked whitespace checks pass |
+
+**External failure investigation:** All 18 failures were reproduced and inspected;
+no new failure class appeared. Thirteen invalid-output-state probes and the one
+embedded per-evidence-location probe remain explicitly deferred Stage D work.
+Three legacy controls demand a two-paragraph cap for records lacking any entry
+boundaries; those eight records remain one explicitly unresolved source span,
+not eight invented entries. The contact-only Technical Skills test still fails
+its empty-section `next()` lookup because C-04 requires omission; contact
+exclusion/accounting remains correct. That is also the single external Stage
+A/B subset failure. No external test was edited, weakened, or patched.
+
+**Preservation/security:** Protected extraction/model/evidence/matching,
+Stage A CLI/input/publication-reader, `test_section_planner.py`,
+`test_planner_cli.py`, `test_publication.py`, AGENTS.md, pyproject.toml, and
+Git-index hashes match the remediation baseline.
+All audit runs report zero private access, external network, repository write,
+and outside-temporary write attempts; the full suite includes the same 10
+authorized synthetic loopback connections. Test data and generated DOCX/JSON
+fixtures remain under `/tmp/opencode`; no real private resume contents were
+read. Source/input bytes, JSON determinism, and private output modes are
+preserved. No dependencies, `.env`, or `.venv` modifications; no branch switch,
+reset, clean, staging, commit, push, Stage D, or Phase 4 implementation.
+
+The exact full authorized command above was repeated with the same environment,
+guard, flags, and seven exclusions, using
+`--basetemp=/tmp/opencode/sc-remediation-full-authorized`. Focused runs used
+separate external temporary directories.
+
+**Remaining limitations:** Merge recovery depends on available snapshot cell
+metadata; unmarked entries and ambiguous/missing merge origins remain explicit
+unresolved spans. Record-only legacy catalogs do not expose vertical-merge
+states. Entry budgets therefore cannot promise a count of underlying roles in
+unresolved spans. Broader output-schema/per-evidence-provenance work remains
+deferred. Stopped for independent review; Stage A/B approvals remain in force.
+
+### Stage C owner approval — recorded at Stage D authorization
+
+The final independent Stage C review returned **APPROVE WITH NON-BLOCKING
+OBSERVATIONS** and verified SC-R1/SC-R2/SC-R3 fixed. The project owner explicitly
+approved Stages A, B, and C and authorized Stage D in the Stage D assignment.
+Stage C is now **APPROVED** on that explicit owner authority. The historical
+implementation/review stopping states and verification above are preserved.
+Accepted unmarked-span and snapshot-merge metadata limits, unreleased schema-1
+history, and heading-styled technical-content observations remain recorded.
+Mission 3.3 was not approved by that child-stage approval; it was subsequently APPROVED at the owner closeout (2026-11-25).
+
+## M. Mission 3.3 — Stage D output contract
+
+**Status: IMPLEMENTED — AWAITING INDEPENDENT REVIEW.** Authorized scope:
+D-01 strict structural invariants,
+D-02 source-aware completed-result validation before publication, D-03 compact
+per-evidence provenance, and D-04 evidence-bound summary instructions.
+
+**Schema decision:** The current trusted output contract will be schema
+**2.0.0**. Complete provenance and explicit factual bindings are mandatory;
+schema-1 artifacts lack the information needed to validate them as trusted
+generation instructions. An explicit historical schema-1 reader will preserve
+legacy field/default inspection; producing current output from legacy data
+requires re-planning against validated catalog, analysis, and match inputs.
+This makes the breaking contract intentional despite its unreleased status,
+preserves the Stage B association history, and avoids silently promoting old
+unbound artifacts to the stricter contract. Input schemas and approved selection
+policies remain unchanged. No Stage D or Mission 3.3 approval is recorded.
+
+### Completed D-01 through D-04 behavior
+
+- **D-01:** `section_plan.py` owns strict, extra-forbidden, revalidated output
+  models. The artifact reader rejects duplicate JSON fields and nonstandard
+  constants. Exact integer/boolean checks prevent numeric false/review/page
+  coercions. Evidence and requirement IDs are unique where required; every
+  catalog record has one selected/excluded outcome. Ordered flat/section/entry
+  selections, source references, provenance associations, headings, item counts,
+  record/entry/section caps, and grouping completeness are checked. Prioritized
+  labels retain conservative deduplication, strongest-parent order, supported
+  component references, and at least one surviving eligible source witness.
+  `page_guarantee=False` and `human_review_required=True` are enforced.
+- **D-02:** `SectionPlanner.validate_result` validates fresh source-model
+  projections through the approved `CandidateJobMatcher.validate_result` boundary,
+  revalidates completed output, and explicitly compares every provenance record,
+  original content digest/location/cell reference, requirement component, source
+  context, and identity text with its source inputs. It also compares the output
+  against the shared private approved selection implementation, detecting
+  source-consistent but wrongly selected entries/budgets. It does not call a
+  second matcher or reinterpret lexical support. The CLI invokes this boundary
+  on the JSON-restored plan before `PrivateOutput.write_json`, retaining all
+  no-follow/alias checks and sanitized exit-code behavior. Well-typed forged
+  candidate identities, claims, witnesses, entry groupings, and generation
+  references fail before publication with content-free errors.
+- **D-03:** Every original evidence record has a compact provenance row:
+  evidence ID/type, source filename/SHA-256, original-content SHA-256, exact
+  source location, body/paragraph/table/row/cell/nested/paragraph-in-cell
+  coordinates, contributing cell references where available, and actual output
+  section/entry associations. Optional coordinates remain `None`; unavailable
+  cell provenance is `None`, distinguishable from an available empty collection.
+  Invalid coordinates/ancestry are rejected, not filled in. Managed plans retain
+  validated publication bundle/generation identity and snapshot/catalog hashes.
+  No large resume body is copied: original entry/support text remains traceable
+  in the original catalog, with content digests and managed-generation identity
+  allowing exact retrieval verification.
+- **D-04:** Professional identity instructions are verbatim selected
+  `PROFESSIONAL_SUMMARY` paragraphs with explicit evidence IDs and digest checks.
+  Technical capability instructions contain the supported, evidence-bound
+  prioritized components, including parent requirement associations and tiers;
+  atomic documented background labels retain explicit source bindings.
+  Experience categories bind selected entry IDs and evidence, and project
+  highlights bind actual selected source entries. Existing display projections
+  must exactly equal their structured bindings. Free-form additions, unsupported
+  years/seniority/achievements/qualification claims, empty bindings, and
+  contradictory capability/identity/entry references are rejected. The blueprint
+  remains an instruction contract; no LLM or resume prose generation is added.
+
+### Compatibility and earlier-stage preservation
+
+Current `ResumeSectionPlan` accepts schema 2 only. Mandatory provenance and
+structured bindings cannot be omitted to imitate a historical artifact.
+`LegacyResumeSectionPlan` in `legacy_section_plan.py` preserves schema-1 defaults
+and data-only inspection, including the Stage B association extension and
+Stage C optional entry/education fields. It is never accepted as a trusted
+schema-2 result. `SectionPlanner.replan_legacy` requires validated matching
+source identity, target context and requirement coverage, then builds current
+instructions solely from those sources and the current planner's configured
+budgets; historical factual strings are not silently copied or guessed.
+
+Version assertions, legacy-reader tests, and managed generation-context
+expectations were intentionally updated for this breaking contract. No existing
+test cases were removed, and functional A/B/C checks remain enabled. Input
+schemas stay extraction **3.0.0**, job **2.0.0**, and match **2.0.0**. The
+approved heading/contact/deduplication/component selection, merged-row and
+repeated-section grouping, skill refill, ordering and accounting algorithms
+are preserved. Source-aware CLI integration is the necessary earlier-stage
+dependency; extraction/matching/input-reader/publication-reader algorithms and
+contracts are unchanged.
+
+### Actual verification
+
+All new fixtures are synthetic DOCX-backed inputs under `/tmp/opencode`.
+Tests cover unknown fields at 17 contract layers, strict coercion/JSON handling,
+selection/entry/requirement/provenance/budget contradictions, unsupported and
+self-consistent forged claims, filename/hash/coordinate/generation manipulation,
+valid complete blueprints, schema-1 inspection and source-backed re-planning,
+managed extraction/matching/planning, rejection before private writes, and
+determinism. Two additional failing-first contract challenges exposed numeric
+`0` empty flags and reordered weaker primary parents; both are now rejected.
+
+| Run | Actual result |
+|---|---|
+| New Stage D module | **110 passed**, 0 failed |
+| Existing planner/CLI/Stage C regression | **308 passed**, 0 failed (111 planner + 132 CLI + 65 Stage C) |
+| Earlier Stage B / SA-R01 / failure / atomic-replace safeguards | **70 passed, 173 deselected**, 0 failed |
+| Publication + matcher regressions | **220 passed**, 0 failed |
+| Assigned external schema/provenance cases | **14 passed, 62 deselected**, 0 failed |
+| Complete unmodified external advisory suite | **76 collected, 72 passed, 4 failed** |
+| Full authorized repository regression | **1,320 collected, 1,313 passed, 7 documented private-source exclusions, 0 failed, 11 unchanged warnings** (70.34s) |
+| Dedicated repeated/hash-seed checks | **5 passed, 357 deselected**; seeds **1/17/103** pass |
+| Dependency / diff checks | `pip check`: **No broken requirements found**; tracked/untracked whitespace checks pass |
+
+The remaining four external failures are the accepted Stage C assertions:
+three paragraph-count controls for records with no entry boundaries, and one
+contact-only Technical Skills `next()` lookup requiring an empty section.
+The current unresolved-span and empty-section omission contracts are preserved;
+no external test was edited or patched. No new failure class appeared, and
+all previously deferred 14 schema/provenance challenges now pass.
+
+**Privacy/security:** All guards report zero real-private access, external
+network, repository-write, and outside-temporary write attempts. The full run's
+10 loopback connections are the existing authorized synthetic transport tests.
+Managed source/input bytes and mode-0600 private publication are preserved;
+forged valid-typed output is rejected before writes without exposing candidate
+markers. No real private contents, `.env`, or credentials were inspected;
+`.venv` and dependencies were not modified. Protected extraction/model/evidence/matcher,
+input-reader/publication-reader, publication-test, AGENTS.md, pyproject.toml,
+and Git-index hashes match the Stage D baseline. No staging, commits, pushes,
+branch changes, resets, cleaning, Stage E implementation, or Phase 4 generation.
+
+**Exact full-suite invocation:** Same guarded environment and seven exclusions
+as the earlier exact authorized command in §L, using
+`--basetemp=/tmp/opencode/stage-d-full-authorized`. Focused runs used independent
+external temporary directories. Tests ran through the project `.venv`.
+
+### Remaining limitations and stopping point
+
+Bindings prove exact source trace and matcher-declared lexical support, not
+semantic entailment or independent verification of candidate qualifications.
+Human review remains mandatory. Accepted unmarked/ambiguous entry and missing
+snapshot merge-metadata limits remain explicit; missing coordinates and
+unavailable generation identity are not fabricated. A future renderer must use
+the supported artifact reader and source-aware boundary and retrieve original
+catalog text through the retained evidence/generation/content bindings. Legacy
+schema-1 data requires original validated inputs for trusted re-planning.
+Stopped at **IMPLEMENTED — AWAITING INDEPENDENT REVIEW**; Stage D and Mission
+3.3 are not owner-approved by this implementation.
+
+### Stage D independent review and conditional owner approval
+
+The independent Stage D review returned **APPROVE WITH NON-BLOCKING
+OBSERVATIONS**. It inspected the strict contract, source-aware boundary,
+provenance, blueprint and schema-1 compatibility, and ran **418 passing focused
+cases**. Six additional independent synthetic checks rejected self-consistent
+evidence/requirement/identity forgeries, rejected boolean count coercion,
+verified exact available/unavailable coordinates, and confirmed unsupported
+historical factual strings are not promoted by re-planning. The external suite
+remained **72 passed / 4 accepted assertion failures**, with no new class.
+Source/test/status/index hashes and Git state were unchanged during the review.
+
+The assignment explicitly authorized **Stage D approval and Stage E
+implementation conditional on a satisfactory independent review**. Stage D is
+now recorded **APPROVED** on that owner authority. Historical A/B/C approvals,
+pre-approval Stage D reports, lexical-support and incomplete-source metadata
+limits, mandatory human review, and explicit legacy inspection are preserved.
+Stage E and Mission 3.3 are APPROVED at the owner closeout (2026-11-25).
+
+## N. Mission 3.3 — Stage E final integration and documentation
+
+**Status: APPROVED (owner closeout 2026-11-25).** Stage D was independently
+reviewed and approved under the owner's explicit conditional authorization before
+Stage E implementation began. Stages A–E are APPROVED and Mission 3.3 is
+APPROVED; Phase 4 has not begun.
+
+### E-01 through E-05 delivery
+
+- **E-01 — Complete integration:** The four existing CLI commands implement
+  pinned Master Resume extraction/publication, JD-only Responses analysis and
+  quotation checks, local matching, approved source selection/grouping/budgets,
+  strict schema-2 restoration, source-aware validation, and private atomic
+  publication. A managed-input alias challenge demonstrated that `match-job`
+  protected direct inputs but could target the generation catalog/snapshot it
+  had consumed. The driver now protects resolved generation paths and repeats
+  alias checks after matching/serialization and before publication. The existing
+  error text and 0/2/3 conventions are preserved; matching/extraction algorithms
+  and data contracts were not changed.
+- **E-02 — Managed handoff:** `tests/test_planning_pipeline.py` adds **23** full
+  synthetic DOCX/JD cases using the real client, completed Responses-envelope
+  parser, analyzer, matcher, planner, reader and private writer. An injectable
+  offline transport produces grounded JD output without network calls. Tests
+  verify all four artifact versions, immutable pair/checksum integrity,
+  candidate-data isolation from the provider request, supported compound-only
+  labels, merged identities/entries, complete accounting, generation provenance,
+  JSON-restored validation before writes, mode 0600 and source/input preservation.
+  Negative cases cover analysis grounding/provider failures, forged references,
+  incompatible versions, tampered/missing generations, atomic publication
+  failures and direct/late generation aliases. Matching/planning repeat byte-for-
+  byte after API settings are removed, without another provider request.
+- **E-03 — Compatibility:** Extraction payload 3.0.0, publication 1.0.0,
+  analysis/prompt 2.0.0, match 2.0.0 and plan 2.0.0 are verified end-to-end.
+  The complete managed pipeline exercises explicit schema-1 inspection and
+  validated-source re-planning; unsupported historical factual strings do not
+  enter current instructions. No legacy plan bypasses the trusted validator.
+- **E-04 — Operations/docs:** README was reconciled with the implemented
+  Master Resume-driven workflow. `docs/planning.md` documents exact commands,
+  private artifact purposes/locations, manifest-aware inspection, source-aware
+  verification, schema/migration policies, privacy/exit-code boundaries and
+  limitations. Extraction/analysis/matching documents now reflect approved
+  status, atomic manifest publication and current integration. They explicitly
+  state that job-tailored AI DOCX/PDF generation remains Phase 4 work.
+- **E-05 — Acceptance:** `tests/test_planning_acceptance.py` adopts the portable
+  **76-case independent review matrix** without the original absolute import
+  paths. The external original is untouched. Its contact control additionally
+  enforces empty-section omission/accounting; its three numeric entry controls
+  use actual DOCX source rows instead of inventing entries from arbitrary
+  paragraphs. All other adversarial assertions retain independent source,
+  schema, path, accounting, blueprint, publication and determinism checks.
+  No xfail/skip hides these current-contract controls. The original external
+  assertion mismatches remain separately reported.
+
+### Exact Stage E files changed
+
+- `src/resume_assistant/cli.py` — consumed-generation match alias protection.
+- `tests/test_planning_pipeline.py` — new full managed workflow tests.
+- `tests/test_planning_acceptance.py` — new portable independent acceptance.
+- `README.md` — current workflow/commands/artifact roles and limitations.
+- `docs/planning.md` — new detailed planning/inspection/compatibility guide.
+- `docs/extraction.md`, `docs/job_analysis.md`, `docs/matching.md` — current
+  publication/status/integration descriptions.
+- `docs/PROJECT_STATUS.md` — conditional D approval, count reconciliation and
+  final Stage E handoff. Historical approval/rejection/verification entries
+  remain preserved; the original M33-13 counting claim is explicitly annotated.
+
+No prior test files or cases were modified or weakened during Stage E. Protected
+A–D planner, strict/legacy models, extraction, analysis/client, matching, input/
+output/publication components and existing test hashes remain unchanged; the
+only source modification is the necessary CLI integration safeguard.
+
+### Actual final verification
+
+| Run | Actual result |
+|---|---|
+| New Stage E integration + acceptance | **99 passed**, 0 failed (23 managed + 76 independent acceptance) |
+| Existing full planner/CLI/A–D tests | **418 passed**, 0 failed |
+| Publication + matcher regression | **220 passed**, 0 failed |
+| Earlier Stage B / SA-R01 / failure / atomic-replace safeguards | **70 passed, 173 deselected**, 0 failed |
+| Original unmodified external adversarial suite | **76 collected, 72 passed, 4 accepted assertion failures** |
+| Full authorized repository regression | **1,419 collected, 1,412 passed, 7 documented private-source exclusions, 0 failed, 11 existing warnings** (62.37s) |
+| Repeated/hash-seed checks | **6 passed, 432 deselected**; seeds **1/17/103** and same-artifact repeatability pass |
+| Dependency / whitespace checks | `pip check`: **No broken requirements found**; tracked/untracked whitespace checks pass |
+
+Every failure was investigated. The two source-generation alias challenges
+failed first and exposed the driver gap; after correction all four direct/managed
+alias cases and both late-alias cases pass. Three pre-existing matcher tests
+detected an overly broad exception conversion during development; the original
+alias error text was restored, and the untouched 220-case regression passes.
+The first workflow fixture assumed a standalone snapshot selector file; it was
+corrected to the actual manifest contract and now explicitly verifies no such
+file is written. None of these development failures remains unresolved.
+
+The four original external failures are unchanged: three obsolete record-count
+assertions for unmarked spans and one contact-only empty-section lookup. Current
+stronger repository controls pass, the source remains explicitly unresolved
+where boundaries are unavailable, and contact content is excluded/accounted for.
+There is no new external failure class, no original external modification, and
+all 14 former Stage D schema/provenance failures remain resolved.
+
+### Privacy, determinism and Git integrity
+
+All instrumented runs report zero actual-private access, external networking,
+repository writes and outside-temporary writes. Candidate-only markers never
+enter the synthetic Responses request; only the supplied JD does. Full-suite
+loopback connections are the same **10** existing authorized transport cases.
+Synthetic artifacts are confined to `/tmp/opencode`; source/input bytes and
+private output permissions remain intact. No live provider request, real Master
+Resume/private artifact inspection, `.env`, `.venv` or dependency change occurred.
+
+The existing branch and HEAD `e029c8f4b668f23d84feabce7494358a4cde2615` are
+preserved. Git index and protected source/test hashes match the mission baseline.
+All existing uncommitted work remains intact. Nothing staged, committed, pushed,
+reset, cleaned, or switched. Stages A–E approvals and review observations remain
+in force; Stage E and Mission 3.3 are APPROVED (owner closeout 2026-11-25).
+
+**Exact final full-suite command:** Same guarded environment and seven explicit
+exclusions as the exact command in §L, with
+`--basetemp=/tmp/opencode/stage-e-full-authorized`. Independent focused temporary
+directories were used. Tests ran through the existing project `.venv` with
+bytecode/cache writing disabled and existing warnings visible.
+
+**Remaining limitations:** Source grounding and lexical support are not semantic
+entailment or independent qualification verification; human review is mandatory.
+Unmarked/ambiguous entries, missing merge origins and unavailable coordinates/
+generation identity remain explicit and are not guessed. Live provider
+compatibility, rendering fidelity and power-loss durability are not established
+by this mission. The final plan is an evidence-bound input contract for Phase 4,
+not a generated resume. **APPROVED at the owner closeout (2026-11-25).**
+
+## O. Phase 4 — core resume generation (APPROVED)
+
+**Status: APPROVED (2026-11-26, explicit owner approval).** This does not
+change Mission 3.3 approval states; template filling and any later Phase 4
+scope remain future work, while `--output-pdf` is implemented via optional
+headless LibreOffice (`libreoffice-writer`).
+
+### Delivered scope
+
+- `generate-resume` consumes a strict schema-2.0.0 `ResumeSectionPlan` plus the
+  committed candidate evidence pair and publishes `tailored_resume.json`
+  (generation schema 1.0.0) alongside `--output-docx` and/or `--output-pdf`
+  (at least one of `--output-docx` or `--output-pdf` is required).
+- The provider returns a strict payload (`headline_title`, optional `tagline`,
+  grounded summary sentences, skill groups, and ordered sections/entries/
+  bullets). Every generated claim must cite evidence IDs.
+- The header is deterministic and local: identity records first, otherwise a
+  conservative name-like fallback in `professional-identity`; contact lines come
+  strictly from header-relevant records (`_header_relevant_record`:
+  `professional-identity`, `CONTACT`, `IDENTITY`, preamble/unclassified) plus
+  snapshot headers/footers, with hyperlink targets preserved once and visible
+  URLs deduplicated (non-header sections such as `projects` and
+  `professional-experience` never leak hyperlinks into `contact_lines`). Name
+  detection accepts non-ASCII, hyphenated, credentialed, and preamble-mononym
+  forms while rejecting organization/title lines. Contact/identity records are
+  never sent to the provider.
+- The provider input contains the target job context, hydrated ordered sections,
+  prioritized skills filtered to selected IDs, and a sanitized summary blueprint.
+  Excluded evidence and contact PII never enter the request; contact-only records
+  (including bare phone, portfolio, and `Location:` labels) are omitted and lose
+  their alias, while a technical-skill record whose content is `GitHub` is
+  preserved. Generated PII is rejected across headline/tagline/skill/entry/
+  bullet fields.
+- Generation retries once after parse, schema, or unknown-alias failure using
+  aliases plus sanitized non-PII `repair_guidance` feedback that excludes raw
+  evidence hashes and PII. Unselected `technical-skills` catalog records receive
+  distinct `SK1..SKn` aliases so `_skill_grounded_in_evidence` checks cited
+  `allowed_skill_evidence` records without relaxing `E...` selection rules.
+  Prompt v1.5.0 specifies a dense ATS skills matrix (`35–55` keywords),
+  mandatory quantified metric preservation, a headline/title seniority grounding
+  guardrail (forbidding ungrounded `Mid-Level`, `Senior`, `Staff`, `Principal`,
+  or `Architect`), date-evidence `selected_evidence_ids` grounding, and
+  cross-section overlap condensation; invalid page sizes are validated before
+  provider or output work. DOCX output skips `professional-summary`/
+  `technical-skills` sections that are already rendered from their dedicated
+  fields.
+- Hard validation rejects unselected/integrity-failing evidence, out-of-scope
+  summary/entry/skill citations, unplanned skills/sections/entries, heading
+  mismatches, and section/entry order changes. Numeric claims absent from cited
+  evidence are `ungrounded_metric` warnings; `--strict-metrics` makes them hard
+  failures. Traceability is deterministic; semantic entailment is never claimed
+  (`semantic_entailment_verified=false`, `human_review_required=true`).
+- DOCX rendering uses a compact executive single-column layout (`0.45 in`
+  top/bottom and `0.5 in` left/right margins, `9.5pt` body, `10pt` uppercase
+  headings with `w:pBdr`, no tables/images/Word header/footer content, 2-line
+  balanced contact header, inline `Category: Skill 1 · Skill 2` skill groups
+  with bold category labels, right-aligned `WD_TAB_ALIGNMENT.RIGHT` tab-stop
+  dates without `tech_stack` header dumps, compact Education/Certifications,
+  and A4/Letter sizes). Optional `--output-pdf` converts the rendered DOCX via
+  headless LibreOffice (`soffice`/`libreoffice` from optional
+  `libreoffice-writer`, 60s bounded timeout) without adding Python PDF
+  dependencies, confining outputs to `data/private/processed/` with mode `0600`
+  and cleaning up temporary `.docx` files when `--output-docx` is omitted. Both
+  JSON/DOCX outputs use the existing pinned no-follow, atomic, mode-0600
+  boundary; `PrivateOutput.write_bytes` is additive for binary artifacts.
+
+### Files
+
+- New: `src/resume_assistant/generation_models.py`,
+  `src/resume_assistant/resume_generator.py`,
+  `src/resume_assistant/docx_renderer.py`,
+  `tests/test_resume_generation.py`.
+- Additive: `src/resume_assistant/prompts.py` (generation prompt contract v1.5.0),
+  `src/resume_assistant/llm_client.py` (`responses`, `chat_completions`, `gemini`),
+  `src/resume_assistant/private_output.py` (`write_bytes`),
+  `src/resume_assistant/private_input.py` (`section_plan` artifact label),
+  `src/resume_assistant/cli.py` (`generate-resume`, `--output-pdf`, alias protection, exit codes).
+- Approved Stage A–D planner/matcher/extraction logic and existing tests were not
+  modified or weakened. No new Python runtime dependencies were introduced.
+
+### Verification
+
+- Offline Phase 4 suite: `tests/test_resume_generation.py` — **48 passed** (and
+  **224 passed** combined with `tests/test_llm_client.py`). It runs the real
+  extract/analyze/match/plan/generate path with synthetic DOCX/JD data and a
+  deterministic Responses transport, then checks provider-input privacy,
+  `technical-skills` catalog coverage and `SK1..SKn` alias grounding, prompt
+  v1.5.0 dense-skills/metric/overlap/headline-seniority/date-grounding rules,
+  header extraction/hyperlink deduplication, `mailto:` deduplication and label
+  stripping, non-header section hyperlink isolation, contact-only PII exclusion
+  (including preservation of a `GitHub` technical-skill record), PII validation
+  across all generated text fields, artifact modes (`0600`), JSON round-trip,
+  DOCX executive layout/margins/order/2-line header/compact URL display with
+  preserved hyperlinks/uppercase headings with `w:pBdr`/inline skill
+  groups/right-aligned tab-stop dates/no `tech_stack` header dumps/compact
+  Education & Certifications, `--output-pdf` (PDF-only, DOCX+PDF, path
+  confinement, missing-binary/missing-flag errors), provenance tampering,
+  fabricated/out-of-scope evidence, abbreviated/decimal metric grounding, strict
+  mode, non-PII `repair_guidance` alias repair (including malformed JSON),
+  legacy standalone catalog hydration, unresolved source spans, Letter/A4 page
+  sizes, and 0/2/3 exit codes.
+- Full authorized regression: **1,502 collected / 1,495 selected / 1,494 passed /
+  1 skipped (optional `weasyprint` preview test) / 7 documented private-source
+  exclusions / 0 failed / 11 existing warnings** (same seven deselects as §N).
+- Live Stage 1–5 pipeline verification (`first_live_run`, owner-authorized, run
+  on `v1.5.0` prior to the final headline-seniority/date-evidence prompt text
+  addition): `extract-master`, `analyze-job`, `match-job`, `plan-sections`, and
+  `generate-resume` (`prompt_version: 1.5.0`, `--output-pdf`, `--page-size A4`,
+  model `gemini-3.5-flash-lite`) all exited `0`, producing a 43,994-byte
+  2-page `%PDF-` output with `traceability_verified: True` (0 errors, 1
+  heuristic `ungrounded_metric` warning at `sections[3].entries[2].dates`),
+  41-word summary (3 sentences), 4 categorized `skill_groups` (33 items),
+  4 sections, and preserved quantified metrics (`85%`, `130/130`, `87.9%`,
+  `40+`) without retaining a `.docx` file.
+- `pip check`, `git diff --check`, and `git check-ignore -v .env data/private`
+  pass. No Python runtime dependencies were added.
+
+### Limitations
+
+- Lexical/numeric grounding is not semantic entailment or independent fact
+  verification; human review is mandatory.
+- Numeric warnings are heuristic token checks, not financial/date validation.
+- DOCX rendering is structurally ATS-safe and LibreOffice PDF export converts
+  the rendered DOCX via optional `libreoffice-writer`; Microsoft Word visual
+  fidelity and template filling remain unestablished.
+- Live AgentRouter/OpenRouter endpoint compatibility depends on active provider
+  credentials/credits; Gemini live execution was verified via
+  `gemini-3.5-flash-lite`.
+- Private Master Resume and generated outputs remain strictly untracked under
+  `data/private/`. Phase 4 is recorded `APPROVED` by explicit owner
+  authorization (2026-11-26).
+
+---
+
+## P. Phase 4.4 — Compact 1-Page Budgets, Flagship Ranking, & 1-Page A4 Fit (`IMPLEMENTED — AWAITING REVIEW`)
+
+### Scope & Behavior
+
+- **Configurable Planning Budgets (`section_plan.py`, `section_planner.py`, `cli.py`):**
+  - `PlanBudgets` adds `max_languages` (default `5`), `projects_first` (default
+    `False`), and `include_languages` (default `False`), plus `build_plan_budgets`
+    and `COMPACT_1PAGE_PRESET`. A `@model_serializer(mode='wrap')` omits default
+    extension values so existing schema-2 plans and `LegacyBudgets` round-trips
+    remain unchanged.
+  - `plan-sections` exposes `--max-projects`, `--max-certifications`,
+    `--projects-first`, `--include-languages`, and `--preset compact-1page`
+    (`max_projects=3`, `max_certifications=6`, `projects_first=True`,
+    `include_languages=True`, `max_output_sections=7`, overridable by explicit
+    flags).
+- **Generic Deterministic Ranking (`section_planner.py`):**
+  - `projects` prefers primary independent projects over secondary
+    `additional`/`archive`/`minor`/`secondary`/`other` source sections so
+    flagship engineering projects are not displaced by minor learning labs
+    unless needed to fill `max_projects`.
+  - `certifications` links sub-course entries (`Program: <Parent> (Course N)`)
+    to parent program certificates by normalized title, capping sub-courses to
+    at most `1` when the parent certificate is selected (or at most `2` total
+    entries sharing a parent program) so remaining slots highlight distinct
+    credentials across providers.
+- **Validation, Prompts, & 1-Page Rendering (`prompts.py`, `resume_generator.py`, `docx_renderer.py`):**
+  - Prompt `v1.5.0` explicitly supports metadata-only `professional-experience`
+    timeline entries (`bullets: []`), individual single-line `certifications`
+    credentials (`bullets: []`), unique single-use `entry_id`s, and compact
+    inline `languages` (`bullets: []`).
+  - `_build_llm_input` deduplicates redundant `SK...` catalog entries while
+    keeping all selected `E...` records; `validate_tailored_resume` permits
+    verbatim-grounded `SK...` catalog fallback for planned skills while still
+    rejecting ungrounded/unrelated IDs; `_validation_repair_details` supplies
+    alias-only repair hints (`matched_evidence_ids`, `ENT...` scope, plan
+    section order); `_normalize_language_sections` folds grounded `languages`
+    bullets post-validation and re-validates.
+  - `docx_renderer.py` renders `LANGUAGES` as a single `Resume Body` inline line
+    (`·`-separated), abbreviates full month names and tightens run font size
+    when single-line `Education`/compact headers + right-aligned date spans
+    exceed printable width, and tightens executive spacing (`0.38 in`
+    top/bottom margins, `9.0pt` body/bullets, `1.05`–`1.06` line spacing) with
+    0 layout tables.
+
+### Verification
+
+- **Offline Unit Tests:** `tests/test_section_planner.py` (**116 passed**,
+  including `--preset compact-1page` / overrides, `--projects-first`,
+  `--include-languages`, primary-vs-secondary project tiering, and
+  certification parent-program diversity), `tests/test_planner_cli.py` (**134
+  passed**), and `tests/test_resume_generation.py` (**52 passed**, including
+  inline `languages` rendering, non-wrapping `Education` dates, `SK...`
+  catalog fallback + alias-only repair hints, and metadata-only `bullets: []`
+  experience entries). Focused planner + generation run: **168 passed**.
+- **Full Authorized Regression:** **1,513 collected / 7 deselected / 1,506
+  selected / 1,505 passed / 1 skipped (optional `weasyprint` preview test) /
+  0 failed / 11 existing warnings** (preserving the 7 documented
+  private-Master-Resume exclusions).
+- **Live Stages 4 & 5 Verification (`first_live_run`, owner-authorized, SHA prefix `67798551`):**
+  - `plan-sections --preset compact-1page`: `selected_evidence_records: 397`,
+    `planned_sections: 7` (`projects`: 3 primary entries `[108, 82, 38]` from
+    `independent-software-and-ai-projects`, `professional-experience`: 3,
+    `education`: 1, `certifications`: 6 diverse entries `[34, 10, 4, 4, 4, 3]`,
+    `languages`: 1).
+  - `generate-resume --page-size A4` (`model: gemini-3.5-flash-lite`,
+    `prompt_version: 1.5.0`): `traceability_verified: True`, 0 errors / 1
+    `ungrounded_metric` warning (`summary_sentences[1]`), 38-word summary, 4
+    `skill_groups` (36 skill items), `projects` bullets `[4, 4, 3]`,
+    `professional-experience` bullets `[3, 0, 2]`, `education` `[0]`,
+    `certifications` `[0, 0, 0, 0, 0, 0]`, `languages` `[0]`, metrics
+    `85%`/`130/130`/`87.9%`/`40+` preserved, and `42,467`-byte **1-page** A4
+    `%PDF-`.
+- `pip check`, `git diff --check`, and `git check-ignore -v .env data/private`
+  pass. No Python runtime dependencies were added.
+
+---
+
+## Q. Phase 5 / 5.1 — End-to-End Pipeline Orchestrator, Local Gradio 6 UI, Auto-Fit & Prompt v1.6.0 (`IMPLEMENTED — AWAITING REVIEW`)
+
+### Scope & Behavior
+
+- **Cached Stages 1–5 Orchestrator (`src/resume_assistant/pipeline.py`):**
+  - `run_resume_pipeline(...)` automates extraction, JD analysis (with transient HTTP `503` retries), local matching, section planning, and resume generation into mode-`0700` run directories with mode-`0600` artifacts (`tailored_resume.json/.docx/.pdf`).
+  - Caches Stage 1 extraction outputs keyed by Master Resume SHA-256 (`force_extract=True` bypasses cache cleanly) and formats PII-safe Markdown preview summaries (`format_resume_preview_markdown`).
+  - `_job_slug` filters generic JD boilerplate headings (`objective`, `summary`, `position overview`, `role overview`, `about the role`, `job summary`, etc.), and `_job_slug_from_analysis` atomically renames `run_dir` using extracted `company_name` + `role_title` after Stage 2.
+  - Under `compact-1page`, deterministically retries rendering through `compact_tier=0 -> 1 -> 2` (`docx_renderer.py`: `0.38/0.34/0.31 in` top/bottom margins, `9.0/8.75/8.5 pt` body/bullet scale, `1.06/1.04/1.02` line spacing, 0 layout tables) with zero extra LLM calls, emitting `overflow_warning` only if `pdf_page_count > 1` persists at `compact_tier=2`.
+- **Loopback Gradio `6.32.0` Web UI & Entry Point (`src/resume_assistant/ui.py`, `main.py`):**
+  - `main.py` loads root `.env` via `load_dotenv_file` (without overwriting existing exported environment variables), checks `data/private/Master_Resume.docx` availability, detects WSL (`is_wsl()`) to disable `inbrowser` while printing the loopback URL, and binds Gradio strictly to `127.0.0.1` with `share=False`.
+  - Uses `gr.themes.Base` with `(gr.themes.Font('Inter'), 'ui-sans-serif', 'system-ui', 'sans-serif')` (preventing Gradio 6 `to_dict()` `Font.__eq__` comparison failures against built-in themes) passed to `app.launch(theme=..., css=...)` with zero deprecation warnings, client-side Light/Dark mode toggle, 4-card adaptive KPI strip, prominent `ra-error-banner` (`role="alert"`) + `ra-pill-error` failure banners in both the KPI strip and `Resume Preview` tab, side-by-side PDF/DOCX downloads, tabbed `Audit & JD Match` + `Resume Preview`, and optional PII-sanitized `user_instructions` (`cli.py --instructions`, strictly subordinate to evidence traceability).
+- **Prompt `v1.6.0` & Technical-Skill Grounding (`src/resume_assistant/prompts.py`, `src/resume_assistant/resume_generator.py`):**
+  - Bumped `RESUME_GENERATION_PROMPT_VERSION` to `'1.6.0'`: instructs `Dense ATS Technical Skills Matrix` to target **38 to 52** high-signal concise technologies, tools, **and** grounded engineering capabilities, architecture patterns, or evaluation methods (`1 to 4 words each`) across **4 to 5 JD-adaptive, evidence-driven** categories with **Signal Over Padding**.
+  - Updated `_is_technical_skill_catalog_record` with `_is_top_level_technical_heading` so `Heading 2+` subsection/category headers inside `technical-skills` pass through to `technical_skills_evidence` while `Heading 1` section banners stay excluded.
+  - Added `_normalize_skill_grounding_text` in `_skill_grounded_in_evidence` to standardize Unicode dash variants (`\u2010`–`\u2014`, `\u2212`) to ASCII `-` and collapse whitespace while maintaining strict verbatim boundary matching for hyphenated, `@`, and parenthetical acronym terms (`Human-in-the-Loop`, `Precision@K`, `LLM-as-a-Judge`, `Role-Based Access Control (RBAC)`, `Keyword Search (BM25)`).
+- **Release Hygiene & Licensing (`LICENSE`, `pyproject.toml`, `.env.example`, `README.md`):**
+  - Added MIT `LICENSE` (`Copyright (c) 2026 Alaa Badawii`) and `license = { file = "LICENSE" }` in `pyproject.toml`.
+  - Documented `LLM_PROVIDER=gemini` and standard OpenAI-compatible gateways (`chat_completions` / `responses`) as primary quickstart options in `.env.example`, and synced `README.md` + `docs/PROJECT_STATUS.md`.
+
+### Verification
+
+- **Focused Phase 4/5 Offline Tests:** `tests/test_pipeline_and_ui.py` (`7 passed`) + `tests/test_resume_generation.py` (`54 passed`) -> **61 passed** in `52.60s`.
+- **Full Authorized Regression Suite:** **1,522 collected / 7 deselected / 1,515 selected / 1,514 passed / 1 skipped (optional `weasyprint` preview test) / 0 failed / 11 existing warnings** (`docx/oxml/parser.py` `FutureWarning`s; preserving all 7 documented private-Master-Resume exclusions).
+- **Hygiene & Privacy Checks:** `.venv/bin/python -m pip check` (`No broken requirements found.`), `git diff --check` (clean), and `git log --all --full-history --stat -- .env "data/private/*"` (empty; zero private-file history leaks).

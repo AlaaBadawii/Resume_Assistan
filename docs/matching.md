@@ -2,9 +2,10 @@
 
 The matcher consumes validated job analysis and candidate evidence locally. It
 reports traceable **textual evidence**, with explicit extraction-coverage limits
-and human-review indicators. Mission 3.2 was rejected by independent review;
-Mission 3.2.1 addresses findings M32-01–M32-11. Review/approval status is recorded
-in `docs/PROJECT_STATUS.md`.
+and human-review indicators. The initial Mission 3.2 rejection was remediated
+through M32-01–M32-11; Missions 3.2/3.2.1 are owner-approved. Historical review
+and approval provenance are recorded in `PROJECT_STATUS.md`. The match feeds
+the source-validated plan workflow documented in [planning.md](planning.md).
 
 ## Architecture and input compatibility
 
@@ -198,7 +199,10 @@ Duplicate JSON keys, nonstandard constants, incompatible versions, and invalid
 model data fail with sanitized artifact-specific errors.
 
 Output is confined to `data/private/processed/`. Its no-follow directory chain
-is pinned before reading/matching; aliases to inputs are rejected. Validated JSON
+is pinned before reading/matching; aliases to direct inputs and the manifest's
+consumed generation catalog/snapshot are rejected, including aliases introduced
+while matching. Validation and alias identity are rechecked before publication.
+Validated JSON
 is written through the existing exclusive mode-0600 temporary and descriptor-
 relative atomic replacement facility. No API configuration is needed or used.
 CLI output is aggregate counts, schema labels, a source-hash-presence boolean,

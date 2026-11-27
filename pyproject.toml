@@ -7,11 +7,13 @@ name = "resume-assistant"
 version = "0.1.0"
 description = "Generate tailored, ATS-friendly resumes from a private master resume"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 # Runtime: needed by src/build_template.py and all tests
 dependencies = [
     "python-docx>=1.2,<2",
     "pydantic>=2,<3",
+    "gradio>=6,<7",
 ]
 
 [project.optional-dependencies]

@@ -112,9 +112,18 @@ def capture_docx_source(path) -> CapturedSource:
     return CapturedSource(filename=filename, data=data)
 
 
-def read_artifact_text(path, *, artifact: Literal['job_analysis', 'candidate_evidence']) -> str:
+def read_artifact_text(
+    path, *, artifact: Literal[
+        'job_analysis', 'candidate_evidence', 'candidate_job_match', 'section_plan'
+    ]
+) -> str:
     '''Read a regular UTF-8 artifact without following any path symlinks.'''
-    label = {'job_analysis': 'Job analysis artifact input', 'candidate_evidence': 'Candidate evidence artifact input'}[artifact]
+    label = {
+        'job_analysis': 'Job analysis artifact input',
+        'candidate_evidence': 'Candidate evidence artifact input',
+        'candidate_job_match': 'Candidate job match artifact input',
+        'section_plan': 'Resume section plan artifact input',
+    }[artifact]
     _, data = _read_local_bytes(path, label=label, missing_error=PrivateInputMissingError)
     try:
         return data.decode('utf-8')

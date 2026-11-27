@@ -50,7 +50,7 @@ def _reject_json_constant(value):
     raise ValueError('Nonstandard JSON constant.')
 
 
-def _parse_json_document(text: str) -> dict:
+def _parse_json_document(text: str) -> object:
     try:
         return json.loads(
             text,
@@ -88,8 +88,10 @@ def load_committed_pair(
         except private_input.PrivateInputError as error:
             raise PublicationError(str(error)) from error
 
-    if document is None:
-        raise PublicationError('Manifest read produced no document.')
+    # A non-object document is not a legacy catalog and cannot be a manifest.
+    # Reject it explicitly rather than failing later on ``document.get``.
+    if not isinstance(document, dict):
+        raise PublicationError('Candidate evidence input must be a JSON object.')
 
     if is_manifest_format(document):
         bundle_key = resolve_bundle_key(project_root, manifest_path)

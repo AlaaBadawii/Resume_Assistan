@@ -188,6 +188,55 @@ class PrivateOutput:
                     pass
 
 
+    def write_bytes(self, payload: bytes) -> None:
+        '''Exclusively create and atomically replace binary content.'''
+        if not isinstance(payload, bytes):
+            raise PrivateOutputError('Private output payload must be bytes.')
+        if not self._parent_complete:
+            raise PrivateOutputError('Private output parent directory is not available for writing.')
+        self.ensure_current()
+        self._validate_target()
+        parent_fd = self._fds[-1]
+        temporary_name = None
+        fd = None
+        try:
+            for _ in range(32):
+                candidate = f'.resume-assistant-{secrets.token_hex(16)}.tmp'
+                try:
+                    fd = os.open(
+                        candidate,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0),
+                        0o600,
+                        dir_fd=parent_fd,
+                    )
+                except FileExistsError:
+                    continue
+                temporary_name = candidate
+                break
+            if fd is None:
+                raise OSError('Could not create an exclusive artifact temporary file.')
+            self.ensure_current()
+            handle = os.fdopen(fd, 'wb')
+            fd = None  # ownership transferred to the file object
+            with handle:
+                handle.write(payload)
+            self.ensure_current()
+            self._validate_target()
+            os.replace(
+                temporary_name, self.path.name,
+                src_dir_fd=parent_fd, dst_dir_fd=parent_fd,
+            )
+            temporary_name = None
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if temporary_name is not None:
+                try:
+                    os.unlink(temporary_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+
+
 def is_private_output(project_root, path) -> bool:
     '''Inspect an existing directory chain without creating directories/files.'''
     try:
