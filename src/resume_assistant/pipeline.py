@@ -15,6 +15,7 @@ from typing import Callable, Optional
 from resume_assistant import cli as cli_module
 from resume_assistant import docx_renderer, publication_reader
 from resume_assistant.filenames import build_resume_stem, known_company, usable_role
+from resume_assistant.job_text import sanitize_job_description_text
 from resume_assistant.llm_client import LLMProviderError
 from resume_assistant.private_output import PrivateOutput
 from resume_assistant.resume_generator import build_deterministic_header, sanitize_user_instructions
@@ -263,6 +264,9 @@ def run_resume_pipeline(
 
     if not isinstance(job_description_text, str) or not job_description_text.strip():
         raise PipelineInputError('Please paste a non-empty job description before generating.')
+    sanitized_job_description = sanitize_job_description_text(job_description_text)
+    if not sanitized_job_description.strip():
+        raise PipelineInputError('Please paste a non-empty job description before generating.')
     sanitized_instructions = sanitize_user_instructions(user_instructions)
     docx_renderer.resolve_page_size(page_size)
     resolved_preset = None if preset in (None, '', 'default') else preset
@@ -307,14 +311,14 @@ def run_resume_pipeline(
 
         stage = 2
         stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        initial_slug = _job_slug(job_description_text)
+        initial_slug = _job_slug(sanitized_job_description)
         run_dir = _allocate_run_dir(processed_dir, initial_slug, stamp=stamp)
         jd_txt_path = run_dir / 'job_description.txt'
         job_analysis_path = run_dir / 'job_analysis.json'
 
         with PrivateOutput(root, jd_txt_path) as jd_target:
             os.chmod(run_dir, 0o700)
-            jd_target.write_bytes(job_description_text.strip().encode('utf-8') + b'\n')
+            jd_target.write_bytes(sanitized_job_description.strip().encode('utf-8') + b'\n')
         _ensure_private_file_mode(jd_txt_path)
 
         notify(0.25, 'Stage 2/5: Analyzing target job description...')
@@ -322,6 +326,7 @@ def run_resume_pipeline(
             lambda: cli_module.run_analyze_job(
                 input_path=jd_txt_path,
                 output_path=job_analysis_path,
+                max_repair_attempts=1,
             ),
             sleep_fn=sleep_fn,
         )

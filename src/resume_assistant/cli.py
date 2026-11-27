@@ -24,6 +24,7 @@ from resume_assistant.generation_models import TailoredResumeArtifact
 from resume_assistant.extractor import InvalidMasterResumeError
 from resume_assistant.job_analyzer import JobAnalysisError, JobAnalysisInputError, JobDescriptionAnalyzer
 from resume_assistant.job_models import JobDescriptionAnalysis
+from resume_assistant.job_text import sanitize_job_description_text
 from resume_assistant.llm_client import AgentRouterClient, LLMClientError, LLMConfig, LLMUnexpectedError
 from resume_assistant.matching import CandidateJobMatcher, CandidateJobMatchError, CandidateJobVersionError
 from resume_assistant.matching_models import CandidateJobMatch
@@ -237,7 +238,7 @@ def run_extract_master(master_path, evidence_output_path, snapshot_output_path=N
         snapshot_target.__exit__(None, None, None)
 
 
-def run_analyze_job(input_path, output_path=None):
+def run_analyze_job(input_path, output_path=None, *, max_repair_attempts: int = 0):
     try:
         input_path = Path(input_path).resolve()
     except (OSError, TypeError, ValueError, RuntimeError):
@@ -252,9 +253,9 @@ def run_analyze_job(input_path, output_path=None):
         raise JobAnalysisInputError('Job description input/output file identity could not be checked.') from None
 
     with PrivateOutput(PROJECT_ROOT, output_path) as target:
-        source_text = _read_job_text(input_path)
+        source_text = sanitize_job_description_text(_read_job_text(input_path))
         client = AgentRouterClient(LLMConfig.from_env())
-        analyzer = JobDescriptionAnalyzer(client)
+        analyzer = JobDescriptionAnalyzer(client, max_repair_attempts=max_repair_attempts)
         analysis = analyzer.analyze(source_text)
 
         payload = analysis.model_dump_json(indent=2)
