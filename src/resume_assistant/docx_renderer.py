@@ -32,6 +32,72 @@ FONT = 'Calibri'
 BODY_SIZE = Pt(9)
 HEADING_COLOR = RGBColor(0x1F, 0x3B, 0x57)
 
+_COMPACT_TIERS: dict[int, dict[str, float]] = {
+    0: {
+        'top_margin_in': 0.38,
+        'bottom_margin_in': 0.38,
+        'body_pt': 9.0,
+        'heading_pt': 9.5,
+        'name_pt': 15.5,
+        'title_pt': 10.5,
+        'contact_pt': 8.5,
+        'meta_pt': 8.5,
+        'line_spacing': 1.06,
+        'tight_line_spacing': 1.05,
+        'section_before_pt': 4.0,
+        'section_after_pt': 1.5,
+        'entry_before_pt': 2.0,
+        'entry_after_pt': 0.5,
+        'body_after_pt': 1.0,
+        'skill_after_pt': 0.5,
+        'compact_before_pt': 1.0,
+        'compact_after_pt': 0.5,
+        'bullet_after_pt': 0.5,
+    },
+    1: {
+        'top_margin_in': 0.34,
+        'bottom_margin_in': 0.34,
+        'body_pt': 8.75,
+        'heading_pt': 9.25,
+        'name_pt': 15.0,
+        'title_pt': 10.0,
+        'contact_pt': 8.25,
+        'meta_pt': 8.25,
+        'line_spacing': 1.04,
+        'tight_line_spacing': 1.04,
+        'section_before_pt': 3.5,
+        'section_after_pt': 1.0,
+        'entry_before_pt': 1.5,
+        'entry_after_pt': 0.5,
+        'body_after_pt': 0.75,
+        'skill_after_pt': 0.35,
+        'compact_before_pt': 0.75,
+        'compact_after_pt': 0.35,
+        'bullet_after_pt': 0.25,
+    },
+    2: {
+        'top_margin_in': 0.31,
+        'bottom_margin_in': 0.31,
+        'body_pt': 8.5,
+        'heading_pt': 9.0,
+        'name_pt': 14.5,
+        'title_pt': 9.75,
+        'contact_pt': 8.0,
+        'meta_pt': 8.0,
+        'line_spacing': 1.02,
+        'tight_line_spacing': 1.02,
+        'section_before_pt': 3.0,
+        'section_after_pt': 0.75,
+        'entry_before_pt': 1.25,
+        'entry_after_pt': 0.25,
+        'body_after_pt': 0.5,
+        'skill_after_pt': 0.25,
+        'compact_before_pt': 0.5,
+        'compact_after_pt': 0.25,
+        'bullet_after_pt': 0.0,
+    },
+}
+
 PAGE_SIZES: dict[str, Tuple[Length, Length]] = {
     'A4': (Mm(210), Mm(297)),
     'Letter': (Inches(8.5), Inches(11)),
@@ -87,6 +153,16 @@ def find_pdf_converter(converter_bin: Optional[str] = None) -> str:
     return binary
 
 
+def resolve_compact_tier(compact_tier: int) -> dict[str, float]:
+    if (
+        isinstance(compact_tier, bool)
+        or not isinstance(compact_tier, int)
+        or compact_tier not in _COMPACT_TIERS
+    ):
+        raise DocxRenderError('Unsupported compact tier. Supported values: 0, 1, 2.')
+    return _COMPACT_TIERS[compact_tier]
+
+
 def resolve_page_size(page_size: str) -> Tuple[Length, Length]:
     key = str(page_size).strip().capitalize()
     if key not in PAGE_SIZES:
@@ -121,73 +197,75 @@ def _bottom_border(style, color='1F3B57', sz='8'):
     pPr.append(pBdr)
 
 
-def build_styles(doc) -> None:
+def build_styles(doc, *, compact_tier: int = 0) -> None:
+    spec = resolve_compact_tier(compact_tier)
+    body_size = Pt(spec['body_pt'])
     normal = doc.styles['Normal']
     normal.font.name = FONT
-    normal.font.size = BODY_SIZE
-    normal.paragraph_format.line_spacing = 1.06
+    normal.font.size = body_size
+    normal.paragraph_format.line_spacing = spec['line_spacing']
 
     def paragraph_format(style):
         return style.paragraph_format
 
-    name = _style(doc, 'Resume Name', Pt(15.5), bold=True)
+    name = _style(doc, 'Resume Name', Pt(spec['name_pt']), bold=True)
     paragraph_format(name).alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph_format(name).space_after = Pt(0)
 
-    title = _style(doc, 'Resume Title', Pt(10.5), bold=True)
+    title = _style(doc, 'Resume Title', Pt(spec['title_pt']), bold=True)
     paragraph_format(title).alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph_format(title).space_before = Pt(0)
     paragraph_format(title).space_after = Pt(0.5)
 
-    tagline = _style(doc, 'Resume Tagline', BODY_SIZE, italic=True)
+    tagline = _style(doc, 'Resume Tagline', body_size, italic=True)
     paragraph_format(tagline).alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph_format(tagline).space_after = Pt(0.5)
 
-    contact = _style(doc, 'Resume Contact', Pt(8.5))
+    contact = _style(doc, 'Resume Contact', Pt(spec['contact_pt']))
     paragraph_format(contact).alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph_format(contact).space_after = Pt(1)
-    paragraph_format(contact).line_spacing = 1.05
+    paragraph_format(contact).line_spacing = spec['tight_line_spacing']
 
-    heading = _style(doc, 'Resume Section Heading', Pt(9.5), bold=True, base='Heading 1')
+    heading = _style(doc, 'Resume Section Heading', Pt(spec['heading_pt']), bold=True, base='Heading 1')
     heading.font.color.rgb = HEADING_COLOR
-    paragraph_format(heading).space_before = Pt(4)
-    paragraph_format(heading).space_after = Pt(1.5)
+    paragraph_format(heading).space_before = Pt(spec['section_before_pt'])
+    paragraph_format(heading).space_after = Pt(spec['section_after_pt'])
     paragraph_format(heading).keep_with_next = True
     _bottom_border(heading, sz='6')
 
-    sub = _style(doc, 'Resume Subheading', BODY_SIZE, bold=True)
-    paragraph_format(sub).space_before = Pt(2)
-    paragraph_format(sub).space_after = Pt(0.5)
-    paragraph_format(sub).line_spacing = 1.05
+    sub = _style(doc, 'Resume Subheading', body_size, bold=True)
+    paragraph_format(sub).space_before = Pt(spec['entry_before_pt'])
+    paragraph_format(sub).space_after = Pt(spec['entry_after_pt'])
+    paragraph_format(sub).line_spacing = spec['tight_line_spacing']
     paragraph_format(sub).keep_with_next = True
 
-    project = _style(doc, 'Resume Project Title', BODY_SIZE, bold=True)
-    paragraph_format(project).space_before = Pt(2)
-    paragraph_format(project).space_after = Pt(0.5)
-    paragraph_format(project).line_spacing = 1.05
+    project = _style(doc, 'Resume Project Title', body_size, bold=True)
+    paragraph_format(project).space_before = Pt(spec['entry_before_pt'])
+    paragraph_format(project).space_after = Pt(spec['entry_after_pt'])
+    paragraph_format(project).line_spacing = spec['tight_line_spacing']
     paragraph_format(project).keep_with_next = True
 
-    job = _style(doc, 'Resume Job Title', BODY_SIZE, bold=True)
-    paragraph_format(job).space_before = Pt(2)
-    paragraph_format(job).space_after = Pt(0.5)
-    paragraph_format(job).line_spacing = 1.05
+    job = _style(doc, 'Resume Job Title', body_size, bold=True)
+    paragraph_format(job).space_before = Pt(spec['entry_before_pt'])
+    paragraph_format(job).space_after = Pt(spec['entry_after_pt'])
+    paragraph_format(job).line_spacing = spec['tight_line_spacing']
     paragraph_format(job).keep_with_next = True
 
-    meta = _style(doc, 'Resume Entry Meta', Pt(8.5), italic=True)
-    paragraph_format(meta).space_after = Pt(0.5)
-    paragraph_format(meta).line_spacing = 1.05
+    meta = _style(doc, 'Resume Entry Meta', Pt(spec['meta_pt']), italic=True)
+    paragraph_format(meta).space_after = Pt(spec['entry_after_pt'])
+    paragraph_format(meta).line_spacing = spec['tight_line_spacing']
     paragraph_format(meta).keep_with_next = True
 
-    body = _style(doc, 'Resume Body', BODY_SIZE)
-    paragraph_format(body).space_after = Pt(1)
-    paragraph_format(body).line_spacing = 1.06
+    body = _style(doc, 'Resume Body', body_size)
+    paragraph_format(body).space_after = Pt(spec['body_after_pt'])
+    paragraph_format(body).line_spacing = spec['line_spacing']
 
     bullet = doc.styles['List Bullet']
     bullet.font.name = FONT
-    bullet.font.size = BODY_SIZE
+    bullet.font.size = body_size
     paragraph_format(bullet).space_before = Pt(0)
-    paragraph_format(bullet).space_after = Pt(0.5)
-    paragraph_format(bullet).line_spacing = 1.05
+    paragraph_format(bullet).space_after = Pt(spec['bullet_after_pt'])
+    paragraph_format(bullet).line_spacing = spec['tight_line_spacing']
 
 
 def _add(doc, text: str, style: str):
@@ -329,6 +407,8 @@ def _fit_entry_header_line(
     left_text: str,
     right_dates: str,
     right_tab_pos: Length,
+    *,
+    base_pt: float = 9.0,
 ) -> tuple[str, Optional[Pt], Optional[Pt]]:
     if not left_text or not right_dates:
         return right_dates, None, None
@@ -338,15 +418,15 @@ def _fit_entry_header_line(
         else float(right_tab_pos) / float(Pt(1))
     )
     fitted_dates = right_dates
-    if _estimate_header_width_pt(left_text, fitted_dates, 9.0, 9.0) <= available_pt * 0.94:
+    if _estimate_header_width_pt(left_text, fitted_dates, base_pt, base_pt) <= available_pt * 0.94:
         return fitted_dates, None, None
     fitted_dates = _abbreviate_month_names(fitted_dates)
-    if _estimate_header_width_pt(left_text, fitted_dates, 9.0, 9.0) <= available_pt * 0.94:
+    if _estimate_header_width_pt(left_text, fitted_dates, base_pt, base_pt) <= available_pt * 0.94:
         return fitted_dates, None, None
-    for left_pt, right_pt in ((8.5, 8.5), (8.0, 8.0)):
+    for left_pt, right_pt in ((min(base_pt, 8.5), min(base_pt, 8.5)), (min(base_pt, 8.0), min(base_pt, 8.0))):
         if _estimate_header_width_pt(left_text, fitted_dates, left_pt, right_pt) <= available_pt * 0.94:
             return fitted_dates, Pt(left_pt), Pt(right_pt)
-    return fitted_dates, Pt(8.0), Pt(8.0)
+    return fitted_dates, Pt(min(base_pt, 8.0)), Pt(min(base_pt, 8.0))
 
 
 def _add_entry_header_line(
@@ -357,9 +437,10 @@ def _add_entry_header_line(
     right_tab_pos: Length,
     *,
     keep_with_next: bool = True,
+    base_pt: float = 9.0,
 ):
     fitted_dates, left_size, right_size = _fit_entry_header_line(
-        left_text, right_dates, right_tab_pos
+        left_text, right_dates, right_tab_pos, base_pt=base_pt
     )
     paragraph = doc.add_paragraph(style=style)
     paragraph.paragraph_format.keep_with_next = keep_with_next
@@ -384,7 +465,11 @@ def _render_entry(
     section_id: str,
     entry: GeneratedEntry,
     right_tab_pos: Length,
+    *,
+    spec: Optional[dict[str, float]] = None,
 ) -> None:
+    active_spec = spec or _COMPACT_TIERS[0]
+    base_pt = active_spec['body_pt']
     title = entry.title.strip()
     organization = (entry.organization or '').strip()
     dates = (entry.dates or '').strip()
@@ -414,9 +499,10 @@ def _render_entry(
                 right_dates,
                 right_tab_pos,
                 keep_with_next=False,
+                base_pt=base_pt,
             )
-            paragraph.paragraph_format.space_before = Pt(1)
-            paragraph.paragraph_format.space_after = Pt(0.5)
+            paragraph.paragraph_format.space_before = Pt(active_spec['compact_before_pt'])
+            paragraph.paragraph_format.space_after = Pt(active_spec['compact_after_pt'])
         return
 
     entry_style = _ENTRY_STYLE.get(section_id, 'Resume Subheading')
@@ -428,6 +514,7 @@ def _render_entry(
             right_dates,
             right_tab_pos,
             keep_with_next=bool(meta_parts or bullets),
+            base_pt=base_pt,
         )
     if meta_parts:
         meta_paragraph = _add(doc, ' | '.join(meta_parts), 'Resume Entry Meta')
@@ -458,23 +545,27 @@ def _format_language_entry(entry: GeneratedEntry) -> str:
 
 
 def build_document(
-    artifact: TailoredResumeArtifact, page_size: str = DEFAULT_PAGE_SIZE
+    artifact: TailoredResumeArtifact,
+    page_size: str = DEFAULT_PAGE_SIZE,
+    *,
+    compact_tier: int = 0,
 ) -> Document:
     width, height = resolve_page_size(page_size)
+    spec = resolve_compact_tier(compact_tier)
 
     doc = Document()
     section = doc.sections[0]
     section.page_width = width
     section.page_height = height
-    section.top_margin = Inches(0.38)
-    section.bottom_margin = Inches(0.38)
+    section.top_margin = Inches(spec['top_margin_in'])
+    section.bottom_margin = Inches(spec['bottom_margin_in'])
     section.left_margin = Inches(0.5)
     section.right_margin = Inches(0.5)
     section.header_distance = Inches(0.25)
     section.footer_distance = Inches(0.25)
     right_tab_pos = section.page_width - section.left_margin - section.right_margin
 
-    build_styles(doc)
+    build_styles(doc, compact_tier=compact_tier)
 
     header = artifact.header
     content = artifact.content
@@ -501,8 +592,8 @@ def build_document(
         _add(doc, 'TECHNICAL SKILLS', 'Resume Section Heading')
         for group_name, skills in groups:
             paragraph = doc.add_paragraph(style='Resume Body')
-            paragraph.paragraph_format.space_after = Pt(0.5)
-            paragraph.paragraph_format.line_spacing = 1.05
+            paragraph.paragraph_format.space_after = Pt(spec['skill_after_pt'])
+            paragraph.paragraph_format.line_spacing = spec['tight_line_spacing']
             label_run = paragraph.add_run(f'{group_name}: ')
             label_run.bold = True
             paragraph.add_run(' · '.join(skills))
@@ -521,10 +612,10 @@ def build_document(
             ]
             if items:
                 paragraph = _add(doc, ' · '.join(dict.fromkeys(items)), 'Resume Body')
-                paragraph.paragraph_format.space_after = Pt(1)
+                paragraph.paragraph_format.space_after = Pt(spec['body_after_pt'])
             continue
         for entry in entries:
-            _render_entry(doc, generated.section_id, entry, right_tab_pos)
+            _render_entry(doc, generated.section_id, entry, right_tab_pos, spec=spec)
 
     props = doc.core_properties
     props.title = 'Tailored Resume'
@@ -534,9 +625,12 @@ def build_document(
 
 
 def render_docx_bytes(
-    artifact: TailoredResumeArtifact, page_size: str = DEFAULT_PAGE_SIZE
+    artifact: TailoredResumeArtifact,
+    page_size: str = DEFAULT_PAGE_SIZE,
+    *,
+    compact_tier: int = 0,
 ) -> bytes:
-    document = build_document(artifact, page_size)
+    document = build_document(artifact, page_size, compact_tier=compact_tier)
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
@@ -586,10 +680,12 @@ def render_resume_pdf(
     page_size: str = 'LETTER',
     docx_path: Optional[Path] = None,
     converter_bin: Optional[str] = None,
+    compact_tier: int = 0,
 ) -> Path:
     '''Convert a tailored resume DOCX (existing or rendered) to PDF via LibreOffice.'''
     if docx_path is None:
         resolve_page_size(page_size)
+        resolve_compact_tier(compact_tier)
     binary = find_pdf_converter(converter_bin)
     target_path = Path(output_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -613,7 +709,9 @@ def render_resume_pdf(
             source_docx = Path(docx_path)
         else:
             source_docx = temp_root / 'resume.docx'
-            source_docx.write_bytes(render_docx_bytes(resume, page_size=page_size))
+            source_docx.write_bytes(
+                render_docx_bytes(resume, page_size=page_size, compact_tier=compact_tier)
+            )
 
         command = [
             binary,

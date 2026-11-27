@@ -683,19 +683,69 @@ def _build_header(
     )
 
 
+_TOP_LEVEL_HEADING_STYLE_PATTERN = re.compile(r'^(?:heading(?:\s*1)?|title)$', re.IGNORECASE)
+_LEADING_SECTION_NUMBER_PATTERN = re.compile(r'^\s*\d+(?:\.\d+)*[.)]?\s*')
+_DASH_VARIANTS_PATTERN = re.compile(r'[\u2010\u2011\u2012\u2013\u2014\u2212]')
+
+
+def _is_top_level_technical_heading(record: EvidenceRecord, scrubbed_text: str) -> bool:
+    style = (record.formatting or {}).get('style')
+    if not isinstance(style, str) or not style.strip():
+        return False
+    stripped_style = style.strip()
+    if _TOP_LEVEL_HEADING_STYLE_PATTERN.fullmatch(stripped_style):
+        return True
+    if not stripped_style.casefold().startswith('heading'):
+        return False
+    if not record.section_reference:
+        return False
+    without_number = _LEADING_SECTION_NUMBER_PATTERN.sub('', scrubbed_text).strip()
+    slug = re.sub(r'[^a-z0-9]+', '-', without_number.casefold()).strip('-')
+    return bool(slug) and slug == record.section_reference
+
+
 def _is_technical_skill_catalog_record(record: EvidenceRecord) -> bool:
     if record.evidence_type != EvidenceType.TECHNICAL_SKILL:
         return False
     if _record_is_pii_only(record):
         return False
-    style = (record.formatting or {}).get('style')
-    if isinstance(style, str) and style.casefold().startswith('heading'):
+    scrubbed = _scrub_pii(record.original_content).strip()
+    if not scrubbed:
         return False
-    return bool(_scrub_pii(record.original_content).strip())
+    # Exclude top-level section title headings (e.g. Heading 1) while preserving
+    # subsection/category headers (Heading 2+) so capability groupings stay visible.
+    if _is_top_level_technical_heading(record, scrubbed):
+        return False
+    return True
+
+
+MAX_USER_INSTRUCTIONS_CHARS = 600
+
+
+def sanitize_user_instructions(user_instructions: Optional[str]) -> Optional[str]:
+    '''Normalize, bound length, and reject PII in optional Stage 5 instructions.'''
+    if user_instructions is None:
+        return None
+    if not isinstance(user_instructions, str):
+        raise ResumeGenerationError('User instructions must be text.')
+    cleaned = ' '.join(
+        ''.join(ch if (ch >= ' ' or ch in '\n\t') else ' ' for ch in user_instructions).split()
+    )
+    if not cleaned:
+        return None
+    trimmed = cleaned[:MAX_USER_INSTRUCTIONS_CHARS].rstrip()
+    if _pii_spans(trimmed):
+        raise ResumeGenerationError(
+            'User instructions must not contain contact details or PII.'
+        )
+    return trimmed
 
 
 def _build_llm_input(
-    plan: ResumeSectionPlan, records: Mapping[str, EvidenceRecord]
+    plan: ResumeSectionPlan,
+    records: Mapping[str, EvidenceRecord],
+    *,
+    user_instructions: Optional[str] = None,
 ) -> tuple[str, dict[str, str], dict[str, str]]:
     selected = set(plan.selected_evidence_ids)
     for identifier in selected:
@@ -922,6 +972,7 @@ def _build_llm_input(
         technical_skill_ids, pool=available_ids
     )
 
+    cleaned_instructions = sanitize_user_instructions(user_instructions)
     payload = {
         'target_job_context': plan.target_job_context.model_dump(mode='json'),
         'ordered_sections': ordered_sections,
@@ -929,6 +980,8 @@ def _build_llm_input(
         'technical_skills_evidence': technical_skills_evidence,
         'professional_summary_blueprint': summary_blueprint,
     }
+    if cleaned_instructions is not None:
+        payload['user_instructions'] = cleaned_instructions
     return (
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')),
         evidence_alias_by_id,
@@ -941,11 +994,15 @@ def hydrate_plan_evidence(
     catalog: CandidateEvidenceCatalog,
     snapshot: Optional[DocumentSnapshot] = None,
     manifest: Optional[PublicationManifest] = None,
+    *,
+    user_instructions: Optional[str] = None,
 ) -> HydratedGenerationInput:
     '''Verify source/provenance bindings and build the compact provider input.'''
     _verify_sources(plan, catalog, manifest)
     records = _verify_provenance(plan, catalog)
-    llm_input_text, evidence_aliases, entry_aliases = _build_llm_input(plan, records)
+    llm_input_text, evidence_aliases, entry_aliases = _build_llm_input(
+        plan, records, user_instructions=user_instructions,
+    )
     return HydratedGenerationInput(
         header=_build_header(catalog, snapshot),
         evidence_by_id=records,
@@ -1066,6 +1123,11 @@ def _check_contact_pii(
         )
 
 
+def _normalize_skill_grounding_text(text: str) -> str:
+    standardized_dashes = _DASH_VARIANTS_PATTERN.sub('-', text or '')
+    return ' '.join(standardized_dashes.strip().split())
+
+
 def _skill_grounded_in_evidence(
     skill_text: str,
     evidence_ids: Iterable[str],
@@ -1075,7 +1137,7 @@ def _skill_grounded_in_evidence(
     identifiers = list(evidence_ids)
     if not identifiers:
         return False
-    normalized_skill = ' '.join((skill_text or '').strip().split())
+    normalized_skill = _normalize_skill_grounding_text(skill_text)
     if not normalized_skill:
         return False
     pattern = re.compile(
@@ -1089,7 +1151,7 @@ def _skill_grounded_in_evidence(
         record = records.get(identifier)
         if record is None or _record_is_pii_only(record):
             return False
-        normalized_source = ' '.join(record.original_content.split())
+        normalized_source = _normalize_skill_grounding_text(record.original_content)
         if pattern.search(normalized_source):
             found_match = True
     return found_match
@@ -1653,9 +1715,13 @@ class ResumeGenerator:
         catalog: CandidateEvidenceCatalog,
         snapshot: Optional[DocumentSnapshot] = None,
         manifest: Optional[PublicationManifest] = None,
+        *,
+        user_instructions: Optional[str] = None,
     ) -> TailoredResumeArtifact:
         '''Hydrate, call the provider, parse, validate, and build the artifact.'''
-        hydrated = hydrate_plan_evidence(plan, catalog, snapshot, manifest)
+        hydrated = hydrate_plan_evidence(
+            plan, catalog, snapshot, manifest, user_instructions=user_instructions,
+        )
         try:
             payload, report = self._attempt(
                 hydrated.llm_input_text, plan, catalog, hydrated
@@ -1693,8 +1759,9 @@ def generate_tailored_resume(
     client: AgentRouterClient,
     *,
     strict_metrics: bool = False,
+    user_instructions: Optional[str] = None,
 ) -> TailoredResumeArtifact:
     '''Backward-compatible wrapper around :class:`ResumeGenerator`.'''
     return ResumeGenerator(client, strict_metrics=strict_metrics).generate(
-        plan, catalog, snapshot, manifest
+        plan, catalog, snapshot, manifest, user_instructions=user_instructions,
     )

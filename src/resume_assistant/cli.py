@@ -517,6 +517,7 @@ def run_generate_resume(
     *,
     page_size: str = docx_renderer.DEFAULT_PAGE_SIZE,
     strict_metrics: bool = False,
+    user_instructions: str | None = None,
 ) -> tuple[Path, Path | None, TailoredResumeArtifact]:
     if output_docx_path is None and output_pdf_path is None:
         raise ExtractionConfigurationError(
@@ -589,7 +590,13 @@ def run_generate_resume(
 
         client = AgentRouterClient(LLMConfig.from_env())
         artifact = generate_tailored_resume(
-            plan, catalog, snapshot, manifest, client, strict_metrics=strict_metrics,
+            plan,
+            catalog,
+            snapshot,
+            manifest,
+            client,
+            strict_metrics=strict_metrics,
+            user_instructions=user_instructions,
         )
 
         payload = artifact.model_dump_json(indent=2, warnings='error')
@@ -940,6 +947,11 @@ def main(argv=None) -> int:
         action='store_true',
         help='Treat ungrounded numeric claims as hard failures.',
     )
+    generate_parser.add_argument(
+        '--instructions',
+        default=None,
+        help='Optional emphasis/framing instructions (strictly subordinate to traceability).',
+    )
     args = parser.parse_args(argv)
     if args.command == 'extract-master':
         try:
@@ -1094,6 +1106,7 @@ def main(argv=None) -> int:
                 output_pdf_path=Path(args.output_pdf) if args.output_pdf is not None else None,
                 page_size=args.page_size,
                 strict_metrics=args.strict_metrics,
+                user_instructions=args.instructions,
             )
         except UnicodeDecodeError:
             print('error: input file is not valid UTF-8 text')

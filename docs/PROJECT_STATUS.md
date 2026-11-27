@@ -5,7 +5,7 @@ Google Antigravity) and human reviewers. Update this file at the end of every
 mission. **This is a navigation aid — always verify claims against source
 code (see `AGENTS.md` §A).**
 
-Last updated: 2026-11-27 (Stages A–E APPROVED and Mission 3.3 APPROVED at owner closeout 2026-11-25; Phase 4 core evidence-bound JSON/DOCX/PDF generation is APPROVED by explicit owner authorization (2026-11-26); Phase 4.4 compact 1-page budgets, primary-project tiering, certification parent-program diversity, inline `languages`, metadata-only experience support, non-wrapping `Education` dates, and 1-page A4 PDF layout are `IMPLEMENTED — AWAITING REVIEW` (§P), verified by live Stage 4–5 execution (`gemini-3.5-flash-lite`, `traceability_verified: True`, 0 errors / 1 `ungrounded_metric` warning, `42,467`-byte 1-page A4 `%PDF-`) and full authorized regression **1,513 collected / 7 deselected / 1,506 selected / 1,505 passed / 1 skipped (optional `weasyprint` preview test) / 0 failed / 11 existing warnings**; historical approvals and accepted limitations are preserved).
+Last updated: 2026-11-27 (Stages A–E APPROVED and Mission 3.3 APPROVED at owner closeout 2026-11-25; Phase 4 core evidence-bound JSON/DOCX/PDF generation APPROVED by explicit owner authorization 2026-11-26 (§O); Phase 4.4 (§P) and Phase 5 / 5.1 (§Q — end-to-end cached pipeline orchestrator, loopback Gradio 6.32.0 UI, deterministic `compact_tier` 1-page A4 auto-fit, prompt `v1.6.0` adaptive skills matrix + Unicode-dash/subsection-heading grounding fixes, `_job_slug` boilerplate filtering, visible UI error banners, MIT License, and `.env.example` cleanup) are `IMPLEMENTED — AWAITING REVIEW`, verified by focused tests (`tests/test_pipeline_and_ui.py` + `tests/test_resume_generation.py`: 61 passed) and full authorized regression **1,522 collected / 7 deselected / 1,515 selected / 1,514 passed / 1 skipped (optional `weasyprint` preview test) / 0 failed / 11 existing warnings**; historical approvals and accepted limitations are preserved).
 
 ---
 
@@ -64,8 +64,8 @@ tests/render_template_pdf.py -> output/resume_template_preview.pdf (approximate 
 ```
 
 **Technology stack.** Python 3.12.14 · python-docx ≥1.2,<2 · pydantic ≥2,<3 ·
-pytest ≥9 (dev) · weasyprint ≥70 (optional preview) · no agent frameworks,
-RAG, or vector databases.
+gradio ≥6,<7 · pytest ≥9 (dev) · weasyprint ≥70 (optional preview) · MIT License ·
+no agent frameworks, RAG, or vector databases.
 
 **Local execution environment.** Project-local `.venv/` at the repository
 root. Tests: `.venv/bin/python -m pytest`. Dependency check:
@@ -1566,3 +1566,31 @@ headless LibreOffice (`libreoffice-writer`).
     `%PDF-`.
 - `pip check`, `git diff --check`, and `git check-ignore -v .env data/private`
   pass. No Python runtime dependencies were added.
+
+---
+
+## Q. Phase 5 / 5.1 — End-to-End Pipeline Orchestrator, Local Gradio 6 UI, Auto-Fit & Prompt v1.6.0 (`IMPLEMENTED — AWAITING REVIEW`)
+
+### Scope & Behavior
+
+- **Cached Stages 1–5 Orchestrator (`src/resume_assistant/pipeline.py`):**
+  - `run_resume_pipeline(...)` automates extraction, JD analysis (with transient HTTP `503` retries), local matching, section planning, and resume generation into mode-`0700` run directories with mode-`0600` artifacts (`tailored_resume.json/.docx/.pdf`).
+  - Caches Stage 1 extraction outputs keyed by Master Resume SHA-256 (`force_extract=True` bypasses cache cleanly) and formats PII-safe Markdown preview summaries (`format_resume_preview_markdown`).
+  - `_job_slug` filters generic JD boilerplate headings (`objective`, `summary`, `position overview`, `role overview`, `about the role`, `job summary`, etc.), and `_job_slug_from_analysis` atomically renames `run_dir` using extracted `company_name` + `role_title` after Stage 2.
+  - Under `compact-1page`, deterministically retries rendering through `compact_tier=0 -> 1 -> 2` (`docx_renderer.py`: `0.38/0.34/0.31 in` top/bottom margins, `9.0/8.75/8.5 pt` body/bullet scale, `1.06/1.04/1.02` line spacing, 0 layout tables) with zero extra LLM calls, emitting `overflow_warning` only if `pdf_page_count > 1` persists at `compact_tier=2`.
+- **Loopback Gradio `6.32.0` Web UI & Entry Point (`src/resume_assistant/ui.py`, `main.py`):**
+  - `main.py` loads root `.env` via `load_dotenv_file` (without overwriting existing exported environment variables), checks `data/private/Master_Resume.docx` availability, detects WSL (`is_wsl()`) to disable `inbrowser` while printing the loopback URL, and binds Gradio strictly to `127.0.0.1` with `share=False`.
+  - Uses `gr.themes.Base` with `(gr.themes.Font('Inter'), 'ui-sans-serif', 'system-ui', 'sans-serif')` (preventing Gradio 6 `to_dict()` `Font.__eq__` comparison failures against built-in themes) passed to `app.launch(theme=..., css=...)` with zero deprecation warnings, client-side Light/Dark mode toggle, 4-card adaptive KPI strip, prominent `ra-error-banner` (`role="alert"`) + `ra-pill-error` failure banners in both the KPI strip and `Resume Preview` tab, side-by-side PDF/DOCX downloads, tabbed `Audit & JD Match` + `Resume Preview`, and optional PII-sanitized `user_instructions` (`cli.py --instructions`, strictly subordinate to evidence traceability).
+- **Prompt `v1.6.0` & Technical-Skill Grounding (`src/resume_assistant/prompts.py`, `src/resume_assistant/resume_generator.py`):**
+  - Bumped `RESUME_GENERATION_PROMPT_VERSION` to `'1.6.0'`: instructs `Dense ATS Technical Skills Matrix` to target **38 to 52** high-signal concise technologies, tools, **and** grounded engineering capabilities, architecture patterns, or evaluation methods (`1 to 4 words each`) across **4 to 5 JD-adaptive, evidence-driven** categories with **Signal Over Padding**.
+  - Updated `_is_technical_skill_catalog_record` with `_is_top_level_technical_heading` so `Heading 2+` subsection/category headers inside `technical-skills` pass through to `technical_skills_evidence` while `Heading 1` section banners stay excluded.
+  - Added `_normalize_skill_grounding_text` in `_skill_grounded_in_evidence` to standardize Unicode dash variants (`\u2010`–`\u2014`, `\u2212`) to ASCII `-` and collapse whitespace while maintaining strict verbatim boundary matching for hyphenated, `@`, and parenthetical acronym terms (`Human-in-the-Loop`, `Precision@K`, `LLM-as-a-Judge`, `Role-Based Access Control (RBAC)`, `Keyword Search (BM25)`).
+- **Release Hygiene & Licensing (`LICENSE`, `pyproject.toml`, `.env.example`, `README.md`):**
+  - Added MIT `LICENSE` (`Copyright (c) 2026 Alaa Badawii`) and `license = { file = "LICENSE" }` in `pyproject.toml`.
+  - Documented `LLM_PROVIDER=gemini` and standard OpenAI-compatible gateways (`chat_completions` / `responses`) as primary quickstart options in `.env.example`, and synced `README.md` + `docs/PROJECT_STATUS.md`.
+
+### Verification
+
+- **Focused Phase 4/5 Offline Tests:** `tests/test_pipeline_and_ui.py` (`7 passed`) + `tests/test_resume_generation.py` (`54 passed`) -> **61 passed** in `52.60s`.
+- **Full Authorized Regression Suite:** **1,522 collected / 7 deselected / 1,515 selected / 1,514 passed / 1 skipped (optional `weasyprint` preview test) / 0 failed / 11 existing warnings** (`docx/oxml/parser.py` `FutureWarning`s; preserving all 7 documented private-Master-Resume exclusions).
+- **Hygiene & Privacy Checks:** `.venv/bin/python -m pip check` (`No broken requirements found.`), `git diff --check` (clean), and `git log --all --full-history --stat -- .env "data/private/*"` (empty; zero private-file history leaks).

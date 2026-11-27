@@ -2,13 +2,17 @@
 
 A local, **Master Resume-driven** Python application that extracts candidate
 evidence, analyzes a supplied job description, matches requirements locally,
-publishes a deterministic, evidence-bound **resume section plan**, and generates
-a validated, evidence-bound **tailored resume JSON + ATS-safe DOCX**.
+publishes a deterministic, evidence-bound **resume section plan**, generates a
+validated, evidence-bound **tailored resume JSON + ATS-safe DOCX/PDF**, and
+provides a loopback-only **Gradio web UI** (`main.py`).
 
-**Current milestone:** Mission 3.3 planning Stages A–E are owner-approved and
-Mission 3.3 is APPROVED (owner closeout 2026-11-25). **Phase 4 core JSON/DOCX
-generation is IMPLEMENTED — AWAITING REVIEW; PDF/template-filling generation is
-not implemented.**
+**Current milestone:** Stages A–E (`Mission 3.3`) and Phase 4 core
+evidence-bound JSON/DOCX/PDF generation are `APPROVED` by owner closeout.
+**Phase 4.4 (1-page budgets & ranking) and Phase 5 / 5.1 (end-to-end cached
+pipeline orchestrator, local Gradio 6 UI, deterministic `compact_tier` auto-fit,
+prompt `v1.6.0` adaptive skills matrix, and pre-release cleanup) are
+`IMPLEMENTED — AWAITING REVIEW`; template-filling generation remains future
+work.**
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for approval provenance and
 actual verification results.
 
@@ -20,30 +24,33 @@ Private Master_Resume.docx
     → immutable snapshot/catalog generation + atomic extraction manifest
 
 Supplied job description (UTF-8 text)
-    → configured Responses client → strict quotation-checked job analysis
+    → configured LLM client (Gemini / Chat Completions / Responses)
+    → strict quotation-checked job analysis
 
 Validated candidate evidence + job analysis
     → local CandidateJobMatcher → component-level candidate/job match
 
 Validated candidate evidence + analysis + match
-    → deterministic source-entry grouping and relevance budgets
+    → deterministic source-entry grouping and relevance/1-page budgets
     → strict schema-2 plan + compact provenance + evidence-bound blueprint
     → JSON restoration → source-aware result validation
     → mode-0600 private atomic publication
 
 Validated section plan + committed candidate evidence
     → deterministic local header (identity/contact stay local)
-    → provider generation over selected non-contact evidence only
+    → provider generation over selected non-contact evidence + technical skills
     → strict payload parse + evidence-scope/numeric-grounding validation
-    → mode-0600 tailored_resume.json + tailored_resume.docx
+    → mode-0600 tailored_resume.json + ATS-safe tailored_resume.docx / .pdf
+      (with deterministic compact_tier 0 -> 1 -> 2 1-page A4 auto-fit in pipeline)
 ```
 
 The Master Resume is the candidate source. The planner does not infer missing
 qualifications. Analysis sends only the **job description**; generation sends
-only **selected non-contact evidence** from the approved plan. Matching and
-planning work offline; analysis and generation require API configuration.
-Contact/identity records and excluded evidence never enter the generation
-request.
+only **selected non-contact evidence** from the approved plan (plus non-PII
+`technical-skills` catalog records and optional PII-free `user_instructions`
+strictly subordinate to traceability). Matching and planning work offline;
+analysis and generation require API configuration. Contact/identity records and
+excluded evidence never enter the generation request.
 
 ## Requirements and setup
 
@@ -56,10 +63,11 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip check
 ```
 
-Runtime dependencies are `python-docx` and `pydantic`; tests use `pytest`.
-The optional `preview` dependency group adds WeasyPrint for an approximate
-blank-template preview. No RAG, vector database, agent framework, or additional
-planning dependency is used.
+Runtime dependencies are `python-docx`, `pydantic`, and `gradio`; tests use
+`pytest`. The optional `preview` dependency group adds WeasyPrint for an
+approximate blank-template preview. No RAG, vector database, agent framework, or
+additional planning dependency is used. Optional PDF conversion uses headless
+LibreOffice (`soffice`/`libreoffice` from `libreoffice-writer`).
 
 ## Private inputs and artifacts
 
@@ -194,11 +202,24 @@ mode `0600`. The deterministic header is built locally from identity/contact
 records. Only selected non-contact evidence from the approved plan (plus
 non-PII `technical-skills` catalog records for `skill_groups`) is sent to the
 provider. Every generated claim must cite selected evidence in its permitted
-section/entry/skill scope; heading and ordering must match the plan. Numeric
-claims that are absent from the cited text produce warnings for human review;
-add `--strict-metrics` to make them hard failures. `--page-size {A4,Letter}`
-selects the DOCX/PDF page size (default A4). Semantic entailment is never
-claimed, and `human_review_required` is always true.
+section/entry/skill scope; heading and ordering must match the plan. Numeric claims that are absent from the cited text produce warnings for human
+review; add `--strict-metrics` to make them hard failures.
+`--page-size {A4,Letter}` selects the DOCX/PDF page size (default A4), and
+`--instructions` accepts optional non-PII emphasis/framing notes strictly
+subordinate to evidence traceability. Semantic entailment is never claimed,
+and `human_review_required` is always true.
+
+### Or run the Local Web UI (`main.py`)
+
+```bash
+.venv/bin/python main.py
+```
+
+`main.py` loads root `.env` if present (without overriding exported variables),
+executes the full Stages 1–5 pipeline with SHA-256 Master Resume caching and
+deterministic `compact_tier` (`0 -> 1 -> 2`) 1-page A4 auto-fit, and launches an
+adaptive Light/Dark Gradio 6 UI bound strictly to `127.0.0.1` (`share=False`;
+under WSL, opens manually via the printed localhost URL).
 
 ## Inspect the plan
 
@@ -250,10 +271,10 @@ deterministically influence content caps, but `page_guarantee` is always false.
 Linux no-follow/descriptor-relative behavior is verified. Unsupported platforms
 fail closed; rendering fidelity, fsync/power-loss durability, and every privileged
 filesystem mutation are not guaranteed. Phase 4 core JSON/DOCX/PDF generation is
-implemented and awaiting review; its numeric checks are heuristic, its DOCX is
-structurally ATS-safe, `--output-pdf` relies on an optional local
-`libreoffice-writer` installation (`soffice`/`libreoffice`), and template
-filling remains later work.
+owner-approved, while Phase 4.4 and Phase 5 / 5.1 are implemented and awaiting
+review; numeric checks are heuristic, the DOCX output is structurally ATS-safe,
+`--output-pdf` relies on an optional local `libreoffice-writer` installation
+(`soffice`/`libreoffice`), and template filling remains later work.
 
 ## Synthetic verification
 
@@ -282,8 +303,12 @@ portable independent acceptance matrix is maintained in
 
 ## Project guide
 
+- `main.py`: loopback-only (`127.0.0.1`, `share=False`) local Gradio web UI
+  launcher with root `.env` loading and WSL browser detection.
 - `src/resume_assistant/`: extraction, analyzer/client, matcher, planner,
-  strict/legacy output models, publication and private I/O, four-command CLI.
+  tailored resume generator/renderer (`prompt_version` `1.6.0`), cached pipeline
+  orchestrator (`pipeline.py`), adaptive Gradio 6 UI (`ui.py`), strict/legacy
+  output models, publication and private I/O, five-command CLI.
 - `tests/`: synthetic unit/acceptance/integration fixtures and seven explicitly
   listed private-source legacy cases.
 - `docs/`: [extraction](docs/extraction.md), [job analysis](docs/job_analysis.md),
@@ -293,6 +318,10 @@ portable independent acceptance matrix is maintained in
 - `src/build_template.py`: blank A4/Letter template creation; optional preview
   is approximate and does not generate a candidate-tailored resume.
 - `AGENTS.md`: onboarding, privacy, environment, scope and Git instructions.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
 
 Work in the existing checkout, preserve all uncommitted work, and use `.venv`.
 Do not stage, commit, push, reset or switch branches without explicit authority.

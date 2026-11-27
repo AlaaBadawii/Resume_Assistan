@@ -1754,12 +1754,17 @@ def test_docx_executive_layout_inline_skills_right_tab_dates_and_no_tech_stack_d
     assert any(ts.alignment == WD_TAB_ALIGNMENT.RIGHT for ts in proj_p.paragraph_format.tab_stops)
 
 
-def test_generation_prompt_v15_specifies_dense_skills_metrics_and_overlap_rules():
+def test_generation_prompt_v16_specifies_adaptive_capabilities_metrics_and_overlap_rules():
     from resume_assistant.prompts import RESUME_GENERATION_INSTRUCTIONS
 
-    assert RESUME_GENERATION_PROMPT_VERSION == '1.5.0'
-    assert '35 to 55' in RESUME_GENERATION_INSTRUCTIONS
-    assert '4 to 5' in RESUME_GENERATION_INSTRUCTIONS
+    assert RESUME_GENERATION_PROMPT_VERSION == '1.6.0'
+    assert '38 to 52' in RESUME_GENERATION_INSTRUCTIONS
+    assert '4 to 5 JD-adaptive' in RESUME_GENERATION_INSTRUCTIONS
+    assert 'grounded engineering capabilities' in RESUME_GENERATION_INSTRUCTIONS
+    assert 'architecture patterns' in RESUME_GENERATION_INSTRUCTIONS
+    assert 'evaluation methods' in RESUME_GENERATION_INSTRUCTIONS
+    assert 'Signal Over Padding' in RESUME_GENERATION_INSTRUCTIONS
+    assert '1 to 4 words each' in RESUME_GENERATION_INSTRUCTIONS
     assert 'Mandatory Quantified Metric Preservation' in RESUME_GENERATION_INSTRUCTIONS
     assert 'Cross-Section Overlap Condensation' in RESUME_GENERATION_INSTRUCTIONS
     for tier in ('Mid-Level', 'Senior', 'Staff', 'Principal', 'Architect'):
@@ -2090,3 +2095,131 @@ def test_metadata_only_experience_entry_allows_empty_bullets_and_renders_cleanly
         p.style.name == 'List Bullet' and not p.text.strip()
         for p in document.paragraphs
     )
+
+
+def test_compact_tier_layout_parameters_and_validation(pipeline):
+    from docx.shared import Pt
+
+    paths, *_ = pipeline
+    plan, catalog, _snapshot, _manifest = _loaded(paths['plan'], paths['candidate'])
+    payload = TailoredResumePayload.model_validate(_valid_payload(plan, catalog))
+    report = validate_tailored_resume(payload, plan, catalog, raise_on_error=False)
+    artifact = TailoredResumeArtifact(
+        prompt_version=RESUME_GENERATION_PROMPT_VERSION,
+        plan_schema_version=plan.schema_version,
+        model='synthetic-generation-model',
+        header=DeterministicHeader(full_name=NAME, contact_lines=[f'Email: {CONTACT_EMAIL}']),
+        content=payload,
+        validation=report,
+    )
+
+    for tier, expected_margin_in, expected_pt, expected_spacing in (
+        (0, 0.38, 9.0, 1.06),
+        (1, 0.34, 8.75, 1.04),
+        (2, 0.31, 8.5, 1.02),
+    ):
+        document = docx_renderer.build_document(artifact, page_size='A4', compact_tier=tier)
+        assert len(document.tables) == 0
+        sec = document.sections[0]
+        assert abs(sec.top_margin - Inches(expected_margin_in)) <= 635
+        assert abs(sec.bottom_margin - Inches(expected_margin_in)) <= 635
+        # OOXML stores font sizes in integer half-points (0.5pt quantization).
+        assert abs(document.styles['Resume Body'].font.size - Pt(expected_pt)) <= Pt(0.25)
+        assert abs(document.styles['List Bullet'].font.size - Pt(expected_pt)) <= Pt(0.25)
+        # OOXML stores multiple line spacing in integer 240ths of a line.
+        assert document.styles['Resume Body'].paragraph_format.line_spacing == pytest.approx(
+            expected_spacing, abs=0.005
+        )
+
+    for invalid_tier in (-1, 3, True):
+        with pytest.raises(docx_renderer.DocxRenderError):
+            docx_renderer.build_document(artifact, page_size='A4', compact_tier=invalid_tier)
+
+
+def test_technical_skill_capabilities_subsection_headers_and_punctuation_grounding(pipeline):
+    paths, *_ = pipeline
+    plan, catalog, snapshot, manifest = _loaded(paths['plan'], paths['candidate'])
+
+    cap_text = (
+        'Human\u2013in\u2013the\u2013Loop, Precision@K, LLM-as-a-Judge, '
+        'Role-Based Access Control (RBAC), Keyword Search (BM25)'
+    )
+    cap_id = hashlib.sha256(b'capability-terms-record').hexdigest()
+    subhead_text = 'Evaluation & Retrieval Capabilities'
+    subhead_id = hashlib.sha256(b'subhead-tech-skill-record').hexdigest()
+    tophead_text = '2. Technical Profile'
+    tophead_id = hashlib.sha256(b'tophead-tech-skill-record').hexdigest()
+
+    updated_catalog = catalog.model_copy(update={
+        'evidence_records': [
+            *catalog.evidence_records,
+            EvidenceRecord(
+                evidence_id=tophead_id,
+                evidence_type=EvidenceType.TECHNICAL_SKILL,
+                original_content=tophead_text,
+                section_reference='technical-profile',
+                formatting={'style': 'Heading 1'},
+            ),
+            EvidenceRecord(
+                evidence_id=subhead_id,
+                evidence_type=EvidenceType.TECHNICAL_SKILL,
+                original_content=subhead_text,
+                section_reference='technical-profile',
+                formatting={'style': 'Heading 2'},
+            ),
+            EvidenceRecord(
+                evidence_id=cap_id,
+                evidence_type=EvidenceType.TECHNICAL_SKILL,
+                original_content=cap_text,
+                section_reference='technical-skills-database',
+            ),
+        ],
+    })
+    template_prov = plan.evidence_provenance[0]
+    updated_plan = plan.model_copy(update={
+        'evidence_provenance': [
+            *plan.evidence_provenance,
+            template_prov.model_copy(update={
+                'evidence_id': tophead_id,
+                'content_sha256': content_sha256(tophead_text),
+            }),
+            template_prov.model_copy(update={
+                'evidence_id': subhead_id,
+                'content_sha256': content_sha256(subhead_text),
+            }),
+            template_prov.model_copy(update={
+                'evidence_id': cap_id,
+                'content_sha256': content_sha256(cap_text),
+            }),
+        ],
+    })
+
+    hydrated = hydrate_plan_evidence(updated_plan, updated_catalog, snapshot, manifest)
+    provider_payload = json.loads(hydrated.llm_input_text)
+    tech_contents = [item['original_content'] for item in provider_payload['technical_skills_evidence']]
+
+    assert tophead_id not in hydrated.evidence_alias_by_id
+    assert subhead_id in hydrated.evidence_alias_by_id
+    assert cap_id in hydrated.evidence_alias_by_id
+    assert subhead_text in tech_contents
+    assert cap_text in tech_contents
+
+    valid_data = _valid_payload(updated_plan, updated_catalog)
+    valid_data['skill_groups'].append({
+        'group_name': 'Retrieval & Evaluation Capabilities',
+        'skills': [
+            {'skill_text': 'Human-in-the-Loop', 'evidence_ids': [cap_id]},
+            {'skill_text': 'Precision@K', 'evidence_ids': [cap_id]},
+            {'skill_text': 'LLM-as-a-Judge', 'evidence_ids': [cap_id]},
+            {'skill_text': 'Role-Based Access Control (RBAC)', 'evidence_ids': [cap_id]},
+            {'skill_text': 'Keyword Search (BM25)', 'evidence_ids': [cap_id]},
+        ],
+    })
+    report = validate_tailored_resume(
+        TailoredResumePayload.model_validate(valid_data),
+        updated_plan,
+        updated_catalog,
+        raise_on_error=False,
+    )
+    assert report.traceability_verified is True
+    assert not report.findings
