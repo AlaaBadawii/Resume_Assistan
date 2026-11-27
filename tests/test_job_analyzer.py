@@ -24,7 +24,7 @@ from resume_assistant.job_models import (
     JOB_ANALYSIS_SCHEMA_VERSION,
     JobDescriptionAnalysis,
 )
-from resume_assistant.prompts import JOB_ANALYSIS_PROMPT_VERSION
+from resume_assistant.prompts import JOB_ANALYSIS_INSTRUCTIONS, JOB_ANALYSIS_PROMPT_VERSION
 from tests.fixtures.jobs import SCALAR_FIELDS, SYNTHETIC_JOB_TEXT, empty_job_payload, grounded_job_payload
 
 SECRET_MARKER = 'SYNTHETIC_SECRET_MARKER_7a3f91'
@@ -40,6 +40,16 @@ class StubClient:
     def generate(self, *, instructions, input_text):
         self.calls.append({'instructions': instructions, 'input': input_text})
         return self._response
+
+
+class SequenceClient:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def generate(self, *, instructions, input_text):
+        self.calls.append({'instructions': instructions, 'input': input_text})
+        return self._responses.pop(0)
 
 
 _UNSET = object()
@@ -277,6 +287,90 @@ def test_exact_substring_quotations_are_accepted_case_sensitively():
     analyzer, _ = _analyzer(payload=bad)
     with pytest.raises(JobAnalysisQuotationError):
         analyzer.analyze(SYNTHETIC_JD)
+
+
+# ---------------------------------------------------------------------------
+# Opt-in bounded repair
+# ---------------------------------------------------------------------------
+
+
+def _quotation_failure_payload():
+    payload = _payload()
+    payload['responsibilities'] = [{
+        'text': 'Design and maintain Python services.',
+        'quotation': 'Design and maintain Python services. This sentence is absent.',
+    }]
+    return payload
+
+
+def _grounding_failure_payload():
+    payload = _payload()
+    payload['role_title'] = {
+        'value': 'Staff Engineer',
+        'quotation': 'Senior Backend Engineer at Acme Corp',
+    }
+    return payload
+
+
+def _conflict_payload():
+    payload = _payload()
+    payload['preferred_skills'] = [dict(payload['required_skills'][0])]
+    return payload
+
+
+def test_default_max_repair_attempts_preserves_single_call_failure():
+    client = SequenceClient([
+        json.dumps(_quotation_failure_payload()),
+        json.dumps(_payload()),
+    ])
+    with pytest.raises(JobAnalysisQuotationError):
+        JobDescriptionAnalyzer(client).analyze(SYNTHETIC_JD)
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize(('payload_factory', 'category'), [
+    (_quotation_failure_payload, 'exact, contiguous substring'),
+    (_grounding_failure_payload, 'own supporting quotation'),
+    (_conflict_payload, 'more than one'),
+])
+def test_opt_in_repair_succeeds_on_second_attempt(payload_factory, category):
+    client = SequenceClient([json.dumps(payload_factory()), json.dumps(_payload())])
+    analysis = JobDescriptionAnalyzer(client, max_repair_attempts=1).analyze(SYNTHETIC_JD)
+
+    assert analysis.role_title.value == 'Senior Backend Engineer'
+    assert len(client.calls) == 2
+    assert client.calls[0]['instructions'] == JOB_ANALYSIS_INSTRUCTIONS
+    repair = client.calls[1]['instructions']
+    assert 'REPAIR ATTEMPT' in repair and category in repair
+    assert SYNTHETIC_JD not in repair
+    assert all(call['input'] == SYNTHETIC_JD for call in client.calls)
+
+
+def test_opt_in_repair_handles_malformed_json():
+    client = SequenceClient(['not json at all', json.dumps(_payload())])
+    analysis = JobDescriptionAnalyzer(client, max_repair_attempts=1).analyze(SYNTHETIC_JD)
+
+    assert analysis.role_title.value == 'Senior Backend Engineer'
+    assert 'valid JSON' in client.calls[1]['instructions']
+
+
+@pytest.mark.parametrize(('payload_factory', 'error_type'), [
+    (_quotation_failure_payload, JobAnalysisQuotationError),
+    (_grounding_failure_payload, JobAnalysisGroundingError),
+    (_conflict_payload, JobAnalysisConflictError),
+])
+def test_repair_failure_raises_exact_subclass_after_one_retry(payload_factory, error_type):
+    bad = json.dumps(payload_factory())
+    client = SequenceClient([bad, bad])
+    with pytest.raises(error_type):
+        JobDescriptionAnalyzer(client, max_repair_attempts=1).analyze(SYNTHETIC_JD)
+    assert len(client.calls) == 2
+
+
+@pytest.mark.parametrize('value', [-1, 1.5, True])
+def test_invalid_repair_attempt_count_is_rejected(value):
+    with pytest.raises(ValueError):
+        JobDescriptionAnalyzer(StubClient(''), max_repair_attempts=value)
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,13 @@ from resume_assistant import cli as cli_module
 from resume_assistant import docx_renderer, pipeline as pipeline_module
 from resume_assistant import ui as ui_module
 from resume_assistant.filenames import build_resume_stem
-from resume_assistant.job_analyzer import JobAnalysisQuotationError
+from resume_assistant.job_analyzer import (
+    JobAnalysisConflictError,
+    JobAnalysisGroundingError,
+    JobAnalysisQuotationError,
+    JobAnalysisResponseError,
+)
+from resume_assistant.job_text import sanitize_job_description_text
 from resume_assistant.llm_client import AgentRouterClient, LLMConfig, LLMConfigurationError, LLMProviderError
 from resume_assistant.prompts import (
     RESUME_GENERATION_INSTRUCTIONS,
@@ -366,6 +372,52 @@ def test_pipeline_end_to_end_cache_reuse_force_extract_permissions_and_503_retry
     assert result3.pdf_page_count == 1
 
 
+def test_pipeline_sanitizes_messy_pasted_jd_and_keeps_canonical_stage_two_text(
+    tmp_path, cold_ui_project
+):
+    messy_a = (
+        JOB_TEXT.replace('Senior Backend Engineer', 'Senior\u00a0Backend\u200b Engineer')
+        .replace('Acme Corp', 'Acme Corp\ufeff')
+        .replace('Design and maintain', 'Design\u200d and maintain')
+        .replace('Python and SQL.', 'Python and SQL.\u2713 ')
+        .replace('\n', '\r\n')
+        + 'We\u2019re a data-driven, cross-functional team.\u200b\r\n'
+    )
+    messy_b = (
+        JOB_TEXT.replace('Senior Backend Engineer', 'Senior\u200c Backend Engineer')
+        .replace('Acme Corp', 'Acme\u00a0Corp')
+        .replace('Design and maintain', 'Design and\u200b maintain')
+        .replace('Python and SQL.', 'Python and SQL.\u2714 ')
+        .replace('\n', '\r\n')
+        + 'We\u2019re a data-driven, cross-functional team.\u200b\r\n'
+    )
+    canonical = sanitize_job_description_text(messy_a)
+    assert canonical == sanitize_job_description_text(messy_b)
+
+    with patch.object(docx_renderer, 'render_resume_pdf', side_effect=_fake_pdf_writer(1)):
+        first = pipeline_module.run_resume_pipeline(
+            messy_a, sleep_fn=lambda _s: None, project_root=tmp_path,
+        )
+        second = pipeline_module.run_resume_pipeline(
+            messy_b, sleep_fn=lambda _s: None, project_root=tmp_path,
+        )
+
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    first_text = first.job_description_path.read_text(encoding='utf-8')
+    second_text = second.job_description_path.read_text(encoding='utf-8')
+    assert first_text == second_text == canonical.strip() + '\n'
+    for character in ('\u200b', '\u200c', '\u200d', '\ufeff', '\u00a0', '\u2212'):
+        assert character not in first_text
+    assert 'data-driven' in first_text and 'cross-functional' in first_text
+
+    stage_two_inputs = [
+        call['payload']['input'] for call in cold_ui_project.calls
+        if call['payload']['instructions'] != RESUME_GENERATION_INSTRUCTIONS
+    ]
+    assert stage_two_inputs == [first_text, second_text]
+
+
 def test_pipeline_boilerplate_jd_slug_skips_generic_headings():
     boilerplate_jd = (
         'About the job\n'
@@ -493,6 +545,23 @@ def test_unrecoverable_stage_failure_is_actionable_and_content_free(
     for output in (kpi, audit, preview, caplog.text):
         assert f'Stage {stage}/5' in output and action in output
         assert CONTACT_EMAIL not in output
+
+
+@pytest.mark.parametrize(('error_type', 'heading', 'detail_fragment'), [
+    (JobAnalysisResponseError, 'JD Analysis Response Malformed', 'valid JSON'),
+    (JobAnalysisQuotationError, 'JD Analysis Quotation Mismatch', 'exact quotations'),
+    (JobAnalysisGroundingError, 'JD Analysis Claim Mismatch', 'own supporting quotation'),
+    (JobAnalysisConflictError, 'JD Analysis Skill Conflict', 'uncertain_skills'),
+])
+def test_stage_two_error_messages_are_specific_and_content_free(
+    error_type, heading, detail_fragment,
+):
+    rendered_heading, detail = ui_module._friendly_error_summary(
+        pipeline_module.PipelineStageError(2, error_type(CONTACT_EMAIL))
+    )
+    assert 'Stage 2/5' in rendered_heading and heading in rendered_heading
+    assert detail_fragment in detail
+    assert CONTACT_EMAIL not in rendered_heading + detail
 
 
 def test_gradio_ui_build_handlers_and_loopback_launch(tmp_path, caplog):

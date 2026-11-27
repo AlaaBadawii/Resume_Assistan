@@ -71,11 +71,45 @@ def _load_json_object(response_text: str) -> Dict[str, Any]:
     return document
 
 
+def _repair_instructions(error: JobAnalysisError) -> str:
+    '''Name the safe failure category without echoing source or model text.'''
+    if isinstance(error, JobAnalysisQuotationError):
+        category = (
+            'a supporting quotation was not an exact, contiguous substring of '
+            'the supplied job description'
+        )
+    elif isinstance(error, JobAnalysisGroundingError):
+        category = (
+            'a copied claim or classification context was not an exact substring '
+            'of its own supporting quotation'
+        )
+    elif isinstance(error, JobAnalysisConflictError):
+        category = (
+            'a skill was classified in more than one of required_skills, '
+            'preferred_skills, or uncertain_skills'
+        )
+    else:
+        category = 'the response was not valid JSON or did not match the required schema'
+    return (
+        JOB_ANALYSIS_INSTRUCTIONS
+        + '\n\nREPAIR ATTEMPT: The previous response was rejected because '
+        + category
+        + '. Return the complete JSON object again. Copy every value, text, name, '
+        'language, level, quotation, and classification_context as an exact, '
+        'case-sensitive, contiguous substring of the supplied job description; '
+        'keep every claim inside its own quotation; and place any skill with '
+        'unclear or conflicting classification in uncertain_skills.'
+    )
+
+
 class JobDescriptionAnalyzer:
     '''Converts job-description text into a validated JobDescriptionAnalysis.'''
 
-    def __init__(self, client) -> None:
+    def __init__(self, client, *, max_repair_attempts: int = 0) -> None:
+        if type(max_repair_attempts) is not int or max_repair_attempts < 0:
+            raise ValueError('max_repair_attempts must be a non-negative integer.')
         self._client = client
+        self._max_repair_attempts = max_repair_attempts
 
     def analyze(self, job_description: str) -> JobDescriptionAnalysis:
         if not isinstance(job_description, str):
@@ -83,8 +117,21 @@ class JobDescriptionAnalyzer:
         if not job_description.strip():
             raise JobAnalysisInputError('Job description input must not be empty.')
 
+        instructions = JOB_ANALYSIS_INSTRUCTIONS
+        for attempt in range(self._max_repair_attempts + 1):
+            try:
+                return self._analyze_once(job_description, instructions)
+            except JobAnalysisError as error:
+                if attempt >= self._max_repair_attempts:
+                    raise
+                instructions = _repair_instructions(error)
+        raise AssertionError('unreachable')
+
+    def _analyze_once(
+        self, job_description: str, instructions: str
+    ) -> JobDescriptionAnalysis:
         response_text = self._client.generate(
-            instructions=JOB_ANALYSIS_INSTRUCTIONS,
+            instructions=instructions,
             input_text=job_description,
         )
         if not isinstance(response_text, str) or not response_text.strip():

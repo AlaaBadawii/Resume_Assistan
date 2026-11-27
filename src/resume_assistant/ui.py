@@ -11,7 +11,13 @@ import gradio as gr
 from gradio import processing_utils
 
 from resume_assistant.docx_renderer import DocxRenderError, PdfRenderError
-from resume_assistant.job_analyzer import JobAnalysisError
+from resume_assistant.job_analyzer import (
+    JobAnalysisConflictError,
+    JobAnalysisError,
+    JobAnalysisGroundingError,
+    JobAnalysisQuotationError,
+    JobAnalysisResponseError,
+)
 from resume_assistant.llm_client import (
     LLMClientError,
     LLMConfigurationError,
@@ -295,6 +301,18 @@ def _friendly_error_summary(error: Exception) -> tuple[str, str]:
         status = f' (HTTP {code})' if type(code) is int and 100 <= code <= 599 else ''
         return (prefix + 'Provider Request Failed' + status,
                 'Check provider availability, credentials, and the request timeout.')
+    if isinstance(error, JobAnalysisResponseError):
+        return (prefix + 'JD Analysis Response Malformed',
+                'The provider did not return valid JSON matching the required schema. Retry with a model that follows the JSON output instructions.')
+    if isinstance(error, JobAnalysisQuotationError):
+        return (prefix + 'JD Analysis Quotation Mismatch',
+                'The provider must return exact quotations copied as contiguous substrings of the pasted JD. Retry, or adjust the pasted text so quotations match exactly.')
+    if isinstance(error, JobAnalysisGroundingError):
+        return (prefix + 'JD Analysis Claim Mismatch',
+                'A copied claim was not inside its own supporting quotation. The provider must copy each claim verbatim from its quotation and the pasted JD.')
+    if isinstance(error, JobAnalysisConflictError):
+        return (prefix + 'JD Analysis Skill Conflict',
+                'A skill was classified in more than one of required, preferred, and uncertain skills. Ask the provider to place conflicting skills in uncertain_skills.')
     if isinstance(error, JobAnalysisError):
         return (prefix + 'JD Analysis Failed',
                 'Check the pasted JD. The provider must return structured data with exact quotations from that text.')
