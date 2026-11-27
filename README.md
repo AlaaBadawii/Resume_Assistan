@@ -2,17 +2,14 @@
 
 A local, **Master Resume-driven** Python application that extracts candidate
 evidence, analyzes a supplied job description, matches requirements locally,
-publishes a deterministic, evidence-bound **resume section plan**, generates a
-validated, evidence-bound **tailored resume JSON + ATS-safe DOCX/PDF**, and
-provides a loopback-only **Gradio web UI** (`main.py`).
+publishes a deterministic **resume section plan**, and generates a **tailored
+resume or cover letter** with citations back to that evidence. Both have private
+JSON, DOCX and PDF outputs. The local Gradio UI also provides copy-ready letter text.
 
 **Current milestone:** Stages A–E (`Mission 3.3`) and Phase 4 core
 evidence-bound JSON/DOCX/PDF generation are `APPROVED` by owner closeout.
-**Phase 4.4 (1-page budgets & ranking) and Phase 5 / 5.1 (end-to-end cached
-pipeline orchestrator, local Gradio 6 UI, deterministic `compact_tier` auto-fit,
-prompt `v1.6.0` adaptive skills matrix, and pre-release cleanup) are
-`IMPLEMENTED — AWAITING REVIEW`; template-filling generation remains future
-work.**
+Phase 4.4 (one-page budgets), Phase 5 / 5.1 (local UI and pipeline), and
+Phase 6 (grounded cover letters) are **`IMPLEMENTED — AWAITING REVIEW`**.
 See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for approval provenance and
 actual verification results.
 
@@ -42,6 +39,10 @@ Validated section plan + committed candidate evidence
     → strict payload parse + evidence-scope/numeric-grounding validation
     → mode-0600 tailored_resume.json + ATS-safe DOCX / PDF downloads
       (with deterministic compact_tier 0 -> 1 -> 2 1-page A4 auto-fit in pipeline)
+
+Same validated section plan + candidate evidence
+    → cover-letter generation with paragraph-level citations to selected evidence
+    → mode-0600 cover_letter.json + DOCX / PDF and locally signed plain text
 ```
 
 The Master Resume is the candidate source. The planner does not infer missing
@@ -81,7 +82,9 @@ LibreOffice (`soffice`/`libreoffice` from `libreoffice-writer`).
 | `data/private/processed/job_candidate_match.json` | Match schema **2.0.0**, explicit component support and human-review requirement |
 | `data/private/processed/resume_section_plan.json` | Plan schema **2.0.0**, complete provenance and explicit summary bindings |
 | `data/private/processed/tailored_resume.json` | Generation schema **1.0.0**, deterministic local header, grounded payload, and validation report |
-| UI run: `<CandidateName>_<Role>[_<Company>].docx` / `.pdf` | Recruiter-ready downloads rendered from the validated artifact; the CLI honors explicit document paths |
+| `data/private/processed/cover_letter.json` | Cover-letter schema **1.0.0**, deterministic local header, grounded payload, and validation report |
+| UI run: `<CandidateName>_<Role>[_<Company>].docx` / `.pdf` | Recruiter-ready resume downloads rendered from the validated artifact; the CLI honors explicit document paths |
+| UI run: `<CandidateName>_<Role>[_<Company>]_Cover_Letter.docx` / `.pdf` | Recruiter-ready cover-letter downloads rendered from the validated artifact |
 
 The committed generation files live below
 `data/private/processed/.extractions/<bundle_key>/generations/<generation_id>/`.
@@ -209,22 +212,50 @@ review; add `--strict-metrics` to make them hard failures.
 subordinate to evidence traceability. Semantic entailment is never claimed,
 and `human_review_required` is always true.
 
+### 6. Generate a grounded cover letter
+
+```bash
+set -a; source .env; set +a
+.venv/bin/python -m resume_assistant generate-cover-letter \
+  --plan data/private/processed/resume_section_plan.json \
+  --candidate-evidence data/private/processed/candidate_evidence.json \
+  --output-json data/private/processed/cover_letter.json \
+  --output-docx data/private/processed/cover_letter.docx \
+  --output-pdf data/private/processed/cover_letter.pdf
+```
+
+Both inputs are required, and at least one of `--output-docx` or `--output-pdf`
+must be provided (`--output-json` defaults to
+`data/private/processed/cover_letter.json`). Each opening, body, and closing
+paragraph cites selected `E...` aliases in `source_evidence_ids`. The application
+resolves these to catalog IDs in the private JSON; citations do not appear in the
+letter itself. A missing company uses “Dear Hiring Team,”. Unknown citations,
+detected contact details, and numeric claims absent from the cited evidence
+trigger up to one repair call. Length outside 220–320 words is a review warning.
+The header and signature come from the local document. Review the prose against
+its cited sources: these checks establish traceability, not semantic entailment.
+
 ### Or run the Local Web UI (`main.py`)
 
 ```bash
 .venv/bin/python main.py
 ```
 
-`main.py` loads root `.env` if present (without overriding exported variables),
-executes the full Stages 1–5 pipeline with SHA-256 Master Resume caching and
-deterministic `compact_tier` (`0 -> 1 -> 2`) 1-page A4 auto-fit, and launches an
-adaptive Light/Dark Gradio 6 UI bound strictly to `127.0.0.1` (`share=False`;
-under WSL, opens manually via the printed localhost URL).
+`main.py` loads root `.env` if present (without overriding exported variables)
+and launches Gradio on `127.0.0.1` with `share=False`. Under WSL, open the
+printed localhost URL. Paste a job description and choose either action first:
 
-The two downloads share a safe ASCII stem derived locally from the Master
-Resume header and the analyzed JD, for example `JaneDoe_AI_Engineer_Acme.pdf`.
-An unknown company is omitted. Each PDF conversion uses its own temporary
-LibreOffice profile, including compact-tier re-renders.
+- **Generate Resume** analyzes the JD, builds the plan, and exports the resume.
+  The compact preset attempts a one-page fit without another generation call.
+- **Generate Cover Letter** prepares its own inputs on a first click. If the
+  canonical JD, current extraction, and planning budgets match a prepared run,
+  it reuses the validated analysis, match, and plan. The Cover Letter tab has a
+  **Copy** control and separate downloads, so both documents remain available.
+
+PDF and DOCX filenames use the local candidate name, role, and known company;
+letter filenames end in `_Cover_Letter`. For example, `JaneDoe_AI_Engineer_Acme.pdf`
+and `JaneDoe_AI_Engineer_Acme_Cover_Letter.pdf` belong to the same application.
+Each PDF export uses its own temporary LibreOffice profile.
 
 ## Inspect the plan
 
@@ -251,8 +282,9 @@ Detailed validation/inspection examples and the compatibility policy are in
   from validated original inputs; an old version label cannot bypass validation.
 - Private resume, JD, evidence, matches, plans, generated outputs, `.env`, and
   virtual environments must never be committed. Candidate material is sent to a
-  provider only by `generate-resume`, and only selected non-contact evidence
-  from the approved plan; identity/contact records and excluded evidence stay
+  provider by the selected document generator. Cover letters use the plan's
+  selected, scrubbed evidence; resumes can also use scrubbed technical-skill
+  records for their skills matrix. Identity/contact records and signatures stay
   local. JD analysis sends only the supplied job description.
 - Application input/output paths use existing pinned no-follow/private atomic
   facilities where documented. Match/plan/generation destinations reject aliases
@@ -276,7 +308,7 @@ deterministically influence content caps, but `page_guarantee` is always false.
 Linux no-follow/descriptor-relative behavior is verified. Unsupported platforms
 fail closed; rendering fidelity, fsync/power-loss durability, and every privileged
 filesystem mutation are not guaranteed. Phase 4 core JSON/DOCX/PDF generation is
-owner-approved, while Phase 4.4 and Phase 5 / 5.1 are implemented and awaiting
+owner-approved, while Phase 4.4, Phase 5 / 5.1, and Phase 6 are implemented and awaiting
 review; numeric checks are heuristic, the DOCX output is structurally ATS-safe,
 `--output-pdf` relies on an optional local `libreoffice-writer` installation
 (`soffice`/`libreoffice`), and template filling remains later work.
@@ -311,9 +343,9 @@ portable independent acceptance matrix is maintained in
 - `main.py`: loopback-only (`127.0.0.1`, `share=False`) local Gradio web UI
   launcher with root `.env` loading and WSL browser detection.
 - `src/resume_assistant/`: extraction, analyzer/client, matcher, planner,
-  tailored resume generator/renderer (`prompt_version` `1.6.0`), cached pipeline
+  resume and cover-letter generators (prompt versions `1.6.1` and `1.0.0`), cached pipeline
   orchestrator (`pipeline.py`), adaptive Gradio 6 UI (`ui.py`), strict/legacy
-  output models, publication and private I/O, five-command CLI.
+  output models, private publication and I/O, and a six-command CLI.
 - `tests/`: synthetic unit/acceptance/integration fixtures and seven explicitly
   listed private-source legacy cases.
 - `docs/`: [extraction](docs/extraction.md), [job analysis](docs/job_analysis.md),

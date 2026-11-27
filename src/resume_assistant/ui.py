@@ -10,6 +10,7 @@ from typing import Any, Callable, Optional
 import gradio as gr
 from gradio import processing_utils
 
+from resume_assistant.cover_letter_generator import CoverLetterGenerationError
 from resume_assistant.docx_renderer import DocxRenderError, PdfRenderError
 from resume_assistant.job_analyzer import (
     JobAnalysisConflictError,
@@ -23,7 +24,14 @@ from resume_assistant.llm_client import (
     LLMConfigurationError,
     LLMProviderError,
 )
-from resume_assistant.pipeline import PipelineInputError, PipelineResult, PipelineStageError, run_resume_pipeline
+from resume_assistant.pipeline import (
+    CoverLetterResult,
+    PipelineInputError,
+    PipelineResult,
+    PipelineStageError,
+    run_cover_letter_pipeline,
+    run_resume_pipeline,
+)
 from resume_assistant.private_output import PrivateOutputError
 from resume_assistant.resume_generator import ResumeGenerationError, UserInstructionsError
 
@@ -166,6 +174,7 @@ def format_kpi_strip_html(
     traceability_value: str = '—',
     traceability_class: str = '',
     skills_value: str = '—',
+    third_label: str = 'Skills',
     cache_value: str = '—',
     error_heading: Optional[str] = None,
     error_detail: Optional[str] = None,
@@ -174,7 +183,7 @@ def format_kpi_strip_html(
     cards = [
         ('PDF Pages', pages_value, pages_class),
         ('Traceability', traceability_value, traceability_class),
-        ('Skills', skills_value, ''),
+        (third_label, skills_value, ''),
         ('Cache', cache_value, ''),
     ]
     rendered = []
@@ -283,6 +292,47 @@ def format_result_markdown(result: PipelineResult, page_size: str) -> str:
     return '\n'.join(lines)
 
 
+def format_cover_letter_kpi_html(result: CoverLetterResult, page_size: str) -> str:
+    page_text = (
+        f'{result.pdf_page_count} / 1 ({page_size})'
+        if result.pdf_page_count == 1
+        else f'{result.pdf_page_count} ({page_size})'
+    )
+    return format_kpi_strip_html(
+        pages_value=page_text,
+        pages_class='ra-pill-ok' if result.pdf_page_count == 1 else 'ra-pill-warn',
+        traceability_value='Verified' if result.traceability_verified else 'Failed',
+        traceability_class='ra-pill-ok' if result.traceability_verified else 'ra-pill-warn',
+        skills_value=f'{result.word_count} words',
+        third_label='Words',
+        cache_value='Hit' if result.cache_hit else 'Refreshed',
+    )
+
+
+def format_cover_letter_markdown(result: CoverLetterResult, page_size: str) -> str:
+    '''Build a PII-safe Markdown audit for a generated cover letter.'''
+    page_badge = f'{result.pdf_page_count} page' + ('s' if result.pdf_page_count != 1 else '')
+    lines = [
+        f'- **PDF Output:** `{page_badge}` ({page_size})',
+        f'- **Traceability Verified:** `{result.traceability_verified}`',
+        f'- **Word Count:** `{result.word_count}`',
+        f'- **Model / Prompt:** `{result.model}` (`v{result.prompt_version}`)',
+        f'- **Master Resume Cache:** `{"cache hit" if result.cache_hit else "re-extracted"}` (`{result.master_sha256[:12]}`)',
+        f'- **Prepared Analysis Reused:** `{result.prepared_cache_reused}`',
+    ]
+
+    if result.overflow_warning:
+        lines.extend(['', f'> **Warning:** {result.overflow_warning}'])
+
+    if result.findings:
+        lines.extend(['', '#### Validation Findings'])
+        for severity, code, location in result.findings:
+            lines.append(f'- `{severity}` — `{code}` at `{location}`')
+    else:
+        lines.extend(['', '#### Validation Findings', '- None (0 errors, 0 warnings).'])
+    return '\n'.join(lines)
+
+
 def _friendly_error_summary(error: Exception) -> tuple[str, str]:
     '''Only application-owned guidance and a numeric HTTP status may reach logs/UI.'''
     stage = None
@@ -318,6 +368,9 @@ def _friendly_error_summary(error: Exception) -> tuple[str, str]:
                 'Check the pasted JD. The provider must return structured data with exact quotations from that text.')
     if isinstance(error, UserInstructionsError):
         return prefix + 'Invalid Instructions', 'Remove the candidate name and contact details from the optional instructions.'
+    if isinstance(error, CoverLetterGenerationError):
+        return (prefix + 'Cover Letter Validation Failed',
+                'Verify the source evidence and use a model that follows the required schema and evidence citations.')
     if isinstance(error, ResumeGenerationError):
         return (prefix + 'Resume Validation Failed',
                 'Verify the source evidence and use a model that follows the required schema and evidence citations.')
@@ -330,16 +383,17 @@ def _friendly_error_summary(error: Exception) -> tuple[str, str]:
     return prefix + 'Generation Could Not Complete', _STAGE_ADVICE.get(stage, 'Check the job description and layout options.')
 
 
-def _error_outputs(heading: str, detail: str, *, blocked: bool = False):
+def _error_outputs(heading: str, detail: str, *, blocked: bool = False, letter: bool = False):
     _LOGGER.warning('%s: %s', heading, detail)
     pill = 'ra-pill-warn' if blocked else 'ra-pill-error'
     kpi = format_kpi_strip_html(
         pages_value='Blocked' if blocked else 'Failed', pages_class=pill,
-        traceability_value='Error', traceability_class=pill, skills_value='0 items',
+        traceability_value='Error', traceability_class=pill,
+        third_label='Words' if letter else 'Skills', skills_value='—' if letter else '0 items',
         error_heading=heading, error_detail=detail,
     )
     audit = f'### {heading}\n\n{detail}'
-    return kpi, None, None, audit, f'_No preview available due to generation error._\n\n{audit}'
+    return kpi, None, None, audit, '' if letter else f'_No preview available due to generation error._\n\n{audit}'
 
 
 def _cache_download(component: gr.File, path: str) -> str:
@@ -349,6 +403,7 @@ def _cache_download(component: gr.File, path: str) -> str:
     cached = data['path']
     if not Path(cached).is_file():
         raise FileNotFoundError
+    Path(cached).chmod(0o600)
     return cached
 
 
@@ -399,9 +454,54 @@ def generate_resume_handler(
     )
 
 
+def generate_cover_letter_handler(
+    job_description: str,
+    preset: str = 'compact-1page',
+    page_size: str = 'A4',
+    max_projects: int = 3,
+    max_certifications: int = 6,
+    force_extract: bool = False,
+    progress: Any = None,
+    *,
+    pipeline_fn: Callable[..., CoverLetterResult] = run_cover_letter_pipeline,
+    project_root: Optional[Path] = None,
+) -> tuple[str, Optional[str], Optional[str], str, str]:
+    '''Gradio click handler returning (kpi_html, pdf_path, docx_path, audit_md, cover_letter_text).'''
+
+    def _on_progress(fraction: float, message: str) -> None:
+        if progress is not None:
+            progress(fraction, desc=message)
+
+    try:
+        resolved_preset = None if preset == 'default' else preset
+        result = pipeline_fn(
+            job_description_text=job_description or '',
+            preset=resolved_preset,
+            max_projects=int(max_projects),
+            max_certifications=int(max_certifications),
+            projects_first=(resolved_preset == 'compact-1page'),
+            include_languages=(resolved_preset == 'compact-1page'),
+            page_size=page_size,
+            force_extract=bool(force_extract),
+            progress_callback=_on_progress,
+            project_root=project_root,
+        )
+    except Exception as error:  # noqa: BLE001
+        return _error_outputs(*_friendly_error_summary(error), blocked=isinstance(error, PipelineInputError), letter=True)
+
+    return (
+        format_cover_letter_kpi_html(result, page_size),
+        str(result.cover_letter_pdf_path),
+        str(result.cover_letter_docx_path),
+        format_cover_letter_markdown(result, page_size),
+        result.cover_letter_text,
+    )
+
+
 def build_app(
     *,
     pipeline_fn: Callable[..., PipelineResult] = run_resume_pipeline,
+    cover_letter_pipeline_fn: Callable[..., CoverLetterResult] = run_cover_letter_pipeline,
     project_root: Optional[Path] = None,
 ) -> gr.Blocks:
     '''Construct the adaptive 2-column local Gradio Blocks application.'''
@@ -412,7 +512,7 @@ def build_app(
                     '<div>'
                     '<h1 class="ra-header-title">Resume Assistant</h1>'
                     '<p class="ra-header-sub">'
-                    'Evidence-bound, ATS-safe resume generation from your local Master Resume.'
+                    'Generate a tailored resume and cover letter from your local Master Resume.'
                     '</p>'
                     '</div>'
                 )
@@ -431,7 +531,7 @@ def build_app(
                         placeholder=_JD_PLACEHOLDER,
                     )
                     user_instructions = gr.Textbox(
-                        label='Optional Instructions',
+                        label='Optional Resume Instructions',
                         lines=3,
                         placeholder=_INSTRUCTIONS_PLACEHOLDER,
                     )
@@ -465,31 +565,47 @@ def build_app(
                             value=False,
                             label='Force re-extract Master Resume',
                         )
-                    generate_btn = gr.Button(
-                        'Generate Resume',
-                        variant='primary',
-                        size='lg',
-                    )
+                    with gr.Row():
+                        generate_btn = gr.Button(
+                            'Generate Resume',
+                            variant='primary',
+                            size='lg',
+                        )
+                        cover_letter_btn = gr.Button(
+                            'Generate Cover Letter',
+                            variant='primary',
+                            size='lg',
+                        )
 
                 with gr.Column(scale=6):
-                    kpi_strip = gr.HTML(value=_initial_kpi_html())
-                    with gr.Row():
-                        pdf_file = gr.File(label='Download PDF', interactive=False)
-                        docx_file = gr.File(label='Download DOCX', interactive=False)
-                    with gr.Tabs():
-                        with gr.Tab('Audit & JD Match'):
-                            audit_markdown = gr.Markdown(
-                                value=(
-                                    'Paste a target job description and click '
-                                    '**Generate Resume** to run Stages 1 → 5 locally.'
-                                ),
-                                elem_classes=['ra-panel'],
-                            )
-                        with gr.Tab('Resume Preview'):
-                            preview_markdown = gr.Markdown(
-                                value='_Generated tailored resume preview will appear here._',
-                                elem_classes=['ra-panel'],
-                            )
+                    with gr.Tabs(selected='resume') as result_tabs:
+                        with gr.Tab('Resume', id='resume'):
+                            kpi_strip = gr.HTML(value=_initial_kpi_html())
+                            with gr.Row():
+                                pdf_file = gr.File(label='Download PDF', interactive=False)
+                                docx_file = gr.File(label='Download DOCX', interactive=False)
+                            with gr.Tabs():
+                                with gr.Tab('Audit & JD Match'):
+                                    audit_markdown = gr.Markdown(
+                                        value=(
+                                            'Paste a target job description and click '
+                                            '**Generate Resume** to run Stages 1 → 5 locally.'
+                                        ),
+                                        elem_classes=['ra-panel'],
+                                    )
+                                with gr.Tab('Resume Preview'):
+                                    preview_markdown = gr.Markdown(
+                                        value='_Generated tailored resume preview will appear here._',
+                                        elem_classes=['ra-panel'],
+                                    )
+                        with gr.Tab('Cover Letter', id='letter'):
+                            cl_kpi_strip = gr.HTML(value=format_kpi_strip_html(third_label='Words'))
+                            with gr.Row():
+                                cl_pdf_file = gr.File(label='Download Cover Letter PDF', interactive=False)
+                                cl_docx_file = gr.File(label='Download Cover Letter DOCX', interactive=False)
+                            cl_text = gr.Textbox(label='Cover Letter', lines=20, interactive=False, buttons=['copy'])
+                            with gr.Accordion('Cover Letter Audit', open=False):
+                                cl_audit_markdown = gr.Markdown(elem_classes=['ra-panel'])
 
         theme_toggle_btn.click(
             fn=None,
@@ -531,6 +647,38 @@ def build_app(
                     )
             return kpi, pdf, docx, audit, preview
 
+        def _cover_letter_click(
+            jd_text,
+            selected_preset,
+            selected_page_size,
+            proj_cap,
+            cert_cap,
+            re_extract,
+            progress=gr.Progress(),
+        ):
+            kpi, pdf, docx, audit, text = generate_cover_letter_handler(
+                jd_text,
+                selected_preset,
+                selected_page_size,
+                proj_cap,
+                cert_cap,
+                re_extract,
+                progress=progress,
+                pipeline_fn=cover_letter_pipeline_fn,
+                project_root=project_root,
+            )
+            if pdf is not None and docx is not None:
+                try:
+                    pdf = _cache_download(cl_pdf_file, pdf)
+                    docx = _cache_download(cl_docx_file, docx)
+                except (OSError, ValueError):
+                    return _error_outputs(
+                        'Stage 5/5 — Download Preparation Failed',
+                        'Start the UI from the project root and check access to the Gradio temporary directory.',
+                        letter=True,
+                    )
+            return kpi, pdf, docx, audit, text
+
         generate_btn.click(
             fn=_click,
             inputs=[
@@ -543,8 +691,23 @@ def build_app(
                 force_extract,
             ],
             outputs=[kpi_strip, pdf_file, docx_file, audit_markdown, preview_markdown],
+            concurrency_id='document-generation',
             concurrency_limit=1,
-        )
+        ).then(lambda: gr.Tabs(selected='resume'), outputs=result_tabs, queue=False)
+        cover_letter_btn.click(
+            fn=_cover_letter_click,
+            inputs=[
+                job_description,
+                preset,
+                page_size,
+                max_projects,
+                max_certifications,
+                force_extract,
+            ],
+            outputs=[cl_kpi_strip, cl_pdf_file, cl_docx_file, cl_audit_markdown, cl_text],
+            concurrency_id='document-generation',
+            concurrency_limit=1,
+        ).then(lambda: gr.Tabs(selected='letter'), outputs=result_tabs, queue=False)
     return demo
 
 
@@ -553,10 +716,15 @@ def launch_app(
     port: int = DEFAULT_PORT,
     open_browser: bool = True,
     pipeline_fn: Callable[..., PipelineResult] = run_resume_pipeline,
+    cover_letter_pipeline_fn: Callable[..., CoverLetterResult] = run_cover_letter_pipeline,
     project_root: Optional[Path] = None,
 ) -> None:
     '''Launch Gradio strictly on 127.0.0.1 with share=False and Gradio 6 theme/css.'''
-    app = build_app(pipeline_fn=pipeline_fn, project_root=project_root)
+    app = build_app(
+        pipeline_fn=pipeline_fn,
+        cover_letter_pipeline_fn=cover_letter_pipeline_fn,
+        project_root=project_root,
+    )
     app.launch(
         server_name=DEFAULT_HOST,
         server_port=port,

@@ -114,11 +114,12 @@ def capture_docx_source(path) -> CapturedSource:
 
 def read_artifact_text(
     path, *, artifact: Literal[
-        'job_analysis', 'candidate_evidence', 'candidate_job_match', 'section_plan'
+        'job_description', 'job_analysis', 'candidate_evidence', 'candidate_job_match', 'section_plan'
     ]
 ) -> str:
     '''Read a regular UTF-8 artifact without following any path symlinks.'''
     label = {
+        'job_description': 'Saved job description',
         'job_analysis': 'Job analysis artifact input',
         'candidate_evidence': 'Candidate evidence artifact input',
         'candidate_job_match': 'Candidate job match artifact input',
