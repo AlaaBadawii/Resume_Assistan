@@ -5,7 +5,7 @@ Google Antigravity) and human reviewers. Update this file at the end of every
 mission. **This is a navigation aid — always verify claims against source
 code (see `AGENTS.md` §A).**
 
-Last updated: 2026-11-27. Stages A–E, Mission 3.3, and Phase 4 core generation (§O) are `APPROVED`. Phase 4.4 (§P), Phase 5 / 5.1 (§Q), the first-click PDF export and recruiter-filename fixes (§R), and Stage 5 role alignment (§S) are `IMPLEMENTED — AWAITING REVIEW`. Latest authorized regression: **1,548 collected / 7 deselected / 1,541 passed / 0 failed / 11 existing warnings**.
+Last updated: 2026-11-27. Stages A–E, Mission 3.3, and Phase 4 core generation (§O) are `APPROVED`. Phase 4.4 (§P), Phase 5 / 5.1 (§Q), the first-click PDF export and recruiter-filename fixes (§R), Stage 5 role alignment (§S), Stage 2 pasted-JD hardening (§T), and Phase 6 grounded cover letters (§U) are `IMPLEMENTED — AWAITING REVIEW`. Latest authorized regression: **1,589 collected / 7 deselected / 1,582 passed / 0 failed / 11 existing warnings**.
 
 ---
 
@@ -57,7 +57,7 @@ resume_section_plan.json + committed candidate evidence (validated, private)
     -> deterministic local header (identity/contact records stay local)
     -> provider generation over selected non-contact evidence only
     -> strict payload parse + evidence-scope/numeric-grounding validation
-    -> private atomic tailored_resume.json + ATS-safe tailored_resume.docx
+    -> private tailored_resume.json or cover_letter.json + ATS-safe DOCX/PDF
 
 src/build_template.py -> templates/resume_template.docx (A4 blank template)
 tests/render_template_pdf.py -> output/resume_template_preview.pdf (approximate preview)
@@ -76,7 +76,7 @@ root. Tests: `.venv/bin/python -m pytest`. Dependency check:
 | Directory | Purpose |
 |---|---|
 | `data/private/` | **NEVER COMMIT** — Master Resume + processed evidence/analysis JSON |
-| `src/resume_assistant/` | extraction + analysis + local matching + source-validated planning; strict/legacy contracts, secure artifact I/O, four-command CLI |
+| `src/resume_assistant/` | Extraction, analysis, matching, planning, resume/letter generation, private artifact I/O, local Gradio UI, and six-command CLI |
 | `src/build_template.py` | template generator (A4 default, `--page-size`) |
 | `tests/` | Latest Stage E authorized run: **1,419 collected, 1,412 passed, 7 documented private-source exclusions, 0 failed, 11 existing warnings**; 99 added Stage E acceptance/integration cases. Historical counts remain in §F/§K–§M. |
 | `templates/` | blank ATS template artifact |
@@ -1607,3 +1607,21 @@ headless LibreOffice (`libreoffice-writer`).
 
 - Prompt `1.6.1` directs `headline_title` and the opening clause of `summary_sentences[0].text` to use one JD-relevant role supported by selected candidate evidence. A missing, unsupported, or overly senior JD title falls back to the closest supported role in both fields. The example demonstrates the pairing; repair instructions keep the two fields aligned if the role changes. This is prompt guidance, not a new validation or retry condition.
 - Verification: **82 focused tests passed**; **1,541 passed / 7 authorized private-source exclusions / 11 existing warnings** in the full suite. `pip check` and `git diff --check` passed.
+
+## T. Stage 2 pasted-JD hardening (`IMPLEMENTED — AWAITING REVIEW`)
+
+- Added `src/resume_assistant/job_text.py` with `sanitize_job_description_text()`: normalizes CRLF/CR, strips zero-width characters, replaces NBSP, maps curly quotes/apostrophes and Unicode minus to ASCII, splits glued inline checkmarks/bullets/Unicode-minus list markers onto `- ` lines, and collapses excessive horizontal whitespace/blank lines. Hyphenated terms (`data-driven`, `cross-functional`) and numeric ranges (`3-4 years`) are preserved. Clean text is returned unchanged.
+- `pipeline.py` sanitizes the pasted JD before slugging, writing `job_description.txt`, and Stage 2; `cli.py` sanitizes the file text before analysis. The LLM and the exact-substring verifier therefore receive the same canonical text, and repeated messy pastes produce identical Stage 2 input.
+- `JobDescriptionAnalyzer` accepts opt-in `max_repair_attempts` (default `0`, preserving single-call behavior). The pipeline uses `1`: a safe category-only repair prompt is appended on malformed JSON, quotation mismatch, claim/context mismatch, or skill-classification conflict; full Pydantic and exact-substring validation reruns, and the specific error subclass is raised if the retry also fails. Repair guidance never echoes JD, model text, secrets, or PII.
+- `ui.py` now reports distinct safe Stage 2 headings/details for malformed provider JSON, quotation mismatch, claim grounding mismatch, and skill classification conflict, while retaining the generic `JobAnalysisError` fallback.
+- Verification: **295 focused tests passed** (`test_job_text.py`, `test_job_analyzer.py`, `test_job_grounding.py`, `test_pipeline_and_ui.py`, `test_cli.py`); full authorized suite **1,562 passed / 7 private-source exclusions / 11 existing warnings**. `pip check` and `git diff --check` passed.
+
+## U. Phase 6 grounded cover letter (`IMPLEMENTED — AWAITING REVIEW`)
+
+- Added `src/resume_assistant/cover_letter_models.py` (schema **1.0.0**): salutation, opening, 1–2 body paragraphs, closing, and sign-off. Each paragraph's `source_evidence_ids` contains unique `E...` aliases on the wire and resolved catalog IDs in the private artifact. `CoverLetterArtifact` reuses the deterministic local header and grounding report.
+- Added `COVER_LETTER_PROMPT_VERSION = '1.0.0'` and generation instructions in `prompts.py`. The prompt requires 220–320 words, selected `E...` aliases only, no invented metrics/employers/dates/seniority/contact details, a grounded salutation, and a comma-terminated sign-off without the candidate name.
+- `cover_letter_generator.py` projects verified plan evidence onto the letter's role/company, supported skills, and eligible selected records. Raw catalog IDs, missing aliases, and resume-only supplemental skill aliases are rejected on the wire. The header is kept local; checks cover detected contact PII, local name/contact fragments, numbers in cited evidence, greeting, sign-off, and length. A failed validation permits one repair using application-owned feedback. Length alone is a warning; semantic accuracy and final wording require human review.
+- `pipeline.py` shares Stages 1–4. Resume runs analyze the JD afresh. A cover-letter run can reuse the newest saved analysis/match/plan for the exact canonical JD, Master SHA, current publication generation, and effective budgets. Saved quotations and plan/source bindings are checked locally. A force-extract, cache miss, or invalid handoff prepares fresh inputs. Exports use the private run directory and mode `0600`.
+- `docx_renderer.py` adds plain-text assembly with local header/signature, a cover-letter DOCX builder using the existing Calibri/margin/no-table styles, and a PDF wrapper that reuses the isolated per-export LibreOffice profile. `filenames.py` adds `build_cover_letter_stem()` with the `_Cover_Letter` suffix and the same 80-character cap.
+- `ui.py` adds a second **Generate Cover Letter** button, a Cover Letter tab with its own KPI strip, PDF/DOCX downloads, audit Markdown, and copy-ready plain text. Resume and cover-letter outputs are held in separate components so generating one does not clear the other. `cli.py` adds the `generate-cover-letter` subcommand and aggregate summary.
+- Verification: **1,582 passed / 7 private-source exclusions / 11 existing python-docx warnings**, including all **20 cover-letter cases**. Tests used synthetic candidate and job inputs and offline provider responses. The PDF-only CLI case used the installed LibreOffice to produce a one-page, mode-`0600` PDF with no intermediate DOCX left behind. `pip check` and `git diff --check` passed.

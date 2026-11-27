@@ -39,17 +39,10 @@ def _title_word(word: str) -> str:
     return _pascal_word(word)
 
 
-def build_resume_stem(candidate_name: str | None, role: str | None, company: str | None = None) -> str:
-    '''Build CandidateName_Role[_Company] from the local header and analyzed JD.'''
-    name = ''.join(map(_pascal_word, _words(candidate_name)))
-    title = '_'.join(map(_title_word, _words(role))) if usable_role(role) else 'Tailored_Resume'
-    parts = [name or 'Resume', title]
-    if known_company(company):
-        parts.append('_'.join(map(_title_word, _words(company))))
-
+def _fit_parts(parts: list[str], max_stem: int) -> str:
     # Give short parts their full length first; share the rest and prefer
     # whole words. Even a very long title leaves room for the company.
-    remaining = _MAX_STEM - (len(parts) - 1)
+    remaining = max_stem - (len(parts) - 1)
     for n, index in enumerate(sorted(range(len(parts)), key=lambda i: len(parts[i]))):
         limit = remaining // (len(parts) - n)
         part = parts[index]
@@ -60,3 +53,30 @@ def build_resume_stem(candidate_name: str | None, role: str | None, company: str
             parts[index] = prefix.rstrip('_')
         remaining -= len(parts[index])
     return '_'.join(parts)
+
+
+def build_resume_stem(candidate_name: str | None, role: str | None, company: str | None = None) -> str:
+    '''Build CandidateName_Role[_Company] from the local header and analyzed JD.'''
+    name = ''.join(map(_pascal_word, _words(candidate_name)))
+    title = '_'.join(map(_title_word, _words(role))) if usable_role(role) else 'Tailored_Resume'
+    parts = [name or 'Resume', title]
+    if known_company(company):
+        parts.append('_'.join(map(_title_word, _words(company))))
+    return _fit_parts(parts, _MAX_STEM)
+
+
+def build_cover_letter_stem(
+    candidate_name: str | None,
+    role: str | None,
+    company: str | None = None,
+) -> str:
+    '''Build CandidateName_Role[_Company]_Cover_Letter within the filename cap.'''
+    name = ''.join(map(_pascal_word, _words(candidate_name)))
+    parts = [name or 'Candidate']
+    if usable_role(role):
+        parts.append('_'.join(map(_title_word, _words(role))))
+    if known_company(company):
+        parts.append('_'.join(map(_title_word, _words(company))))
+    suffix = 'Cover_Letter'
+    base = _fit_parts(parts, _MAX_STEM - len(suffix) - 1)
+    return f'{base}_{suffix}'

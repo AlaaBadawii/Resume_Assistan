@@ -24,6 +24,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Length, Mm, Pt, RGBColor
 
+from resume_assistant.cover_letter_models import CoverLetterArtifact
 from resume_assistant.generation_models import GeneratedEntry, TailoredResumeArtifact
 
 TailoredResume = TailoredResumeArtifact
@@ -636,6 +637,96 @@ def render_docx_bytes(
     return buffer.getvalue()
 
 
+def _cover_letter_paragraphs(artifact: CoverLetterArtifact) -> list[str]:
+    content = artifact.content
+    return [
+        content.opening_paragraph.text.strip(),
+        *(paragraph.text.strip() for paragraph in content.body_paragraphs),
+        content.closing_paragraph.text.strip(),
+    ]
+
+
+def build_cover_letter_plain_text(artifact: CoverLetterArtifact) -> str:
+    '''Assemble copy-ready plain text with the local header and signature.'''
+    header = artifact.header
+    content = artifact.content
+    lines: list[str] = []
+    if header.full_name.strip():
+        lines.append(header.full_name.strip())
+    contacts = [line.strip() for line in header.contact_lines if line.strip()]
+    if contacts:
+        lines.append(' | '.join(contacts))
+    if lines:
+        lines.append('')
+
+    lines.append(content.salutation.strip())
+    for paragraph in _cover_letter_paragraphs(artifact):
+        if not paragraph:
+            continue
+        lines.extend(['', paragraph])
+    lines.extend(['', content.sign_off.strip()])
+    if header.full_name.strip():
+        lines.append(header.full_name.strip())
+    return '\n'.join(lines).strip() + '\n'
+
+
+def _add_cover_letter_body(doc, text: str, *, after_pt: float = 6.0):
+    paragraph = doc.add_paragraph(text, style='Resume Body')
+    paragraph.paragraph_format.space_after = Pt(after_pt)
+    return paragraph
+
+
+def build_cover_letter_document(
+    artifact: CoverLetterArtifact,
+    page_size: str = DEFAULT_PAGE_SIZE,
+) -> Document:
+    width, height = resolve_page_size(page_size)
+    spec = resolve_compact_tier(0)
+
+    doc = Document()
+    section = doc.sections[0]
+    section.page_width = width
+    section.page_height = height
+    section.top_margin = Inches(spec['top_margin_in'])
+    section.bottom_margin = Inches(spec['bottom_margin_in'])
+    section.left_margin = Inches(0.5)
+    section.right_margin = Inches(0.5)
+    section.header_distance = Inches(0.25)
+    section.footer_distance = Inches(0.25)
+
+    build_styles(doc, compact_tier=0)
+
+    header = artifact.header
+    content = artifact.content
+    if header.full_name.strip():
+        _add(doc, header.full_name.strip(), 'Resume Name')
+    _render_contact_header(doc, header.contact_lines)
+    doc.add_paragraph('', style='Resume Body')
+    _add_cover_letter_body(doc, content.salutation.strip(), after_pt=10.0)
+    for paragraph in _cover_letter_paragraphs(artifact):
+        if paragraph:
+            _add_cover_letter_body(doc, paragraph)
+    _add_cover_letter_body(doc, content.sign_off.strip(), after_pt=0.0)
+    if header.full_name.strip():
+        _add(doc, header.full_name.strip(), 'Resume Body')
+
+    props = doc.core_properties
+    props.title = 'Cover Letter'
+    props.author = 'Resume_Assistant'
+    props.comments = 'Evidence-bound cover letter. Human review required.'
+    return doc
+
+
+def render_cover_letter_docx_bytes(
+    artifact: CoverLetterArtifact,
+    page_size: str = DEFAULT_PAGE_SIZE,
+) -> bytes:
+    document = build_cover_letter_document(artifact, page_size)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
 def _write_atomic_private_bytes(target_path: Path, payload: bytes) -> None:
     tmp_name = None
     fd = None
@@ -757,5 +848,46 @@ def render_resume_pdf(
 
         _write_atomic_private_bytes(target_path, pdf_bytes)
         return target_path
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def render_cover_letter_pdf(
+    cover_letter: Optional[CoverLetterArtifact],
+    output_path: Path,
+    *,
+    page_size: str = DEFAULT_PAGE_SIZE,
+    docx_path: Optional[Path] = None,
+    converter_bin: Optional[str] = None,
+) -> Path:
+    '''Convert a cover-letter DOCX (existing or rendered) to PDF via LibreOffice.'''
+    if docx_path is not None:
+        return render_resume_pdf(
+            None,
+            output_path,
+            page_size=page_size,
+            docx_path=docx_path,
+            converter_bin=converter_bin,
+        )
+    if cover_letter is None:
+        raise PdfRenderError(
+            'CoverLetterArtifact is required when docx_path is omitted.'
+        )
+    target_path = Path(output_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_root = Path(tempfile.mkdtemp(dir=target_path.parent, prefix='.cover-letter-pdf-'))
+    try:
+        source_docx = temp_root / 'cover_letter.docx'
+        _write_atomic_private_bytes(
+            source_docx,
+            render_cover_letter_docx_bytes(cover_letter, page_size=page_size),
+        )
+        return render_resume_pdf(
+            None,
+            target_path,
+            page_size=page_size,
+            docx_path=source_docx,
+            converter_bin=converter_bin,
+        )
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)

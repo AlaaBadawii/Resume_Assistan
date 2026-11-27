@@ -20,6 +20,12 @@ from resume_assistant import publication_integrity
 from resume_assistant import publication_reader
 from resume_assistant import publication_store
 from resume_assistant import section_detector as section_detector_module
+from resume_assistant.cover_letter_generator import (
+    CoverLetterGenerationError,
+    cover_letter_word_count,
+    generate_cover_letter,
+)
+from resume_assistant.cover_letter_models import CoverLetterArtifact
 from resume_assistant.generation_models import TailoredResumeArtifact
 from resume_assistant.extractor import InvalidMasterResumeError
 from resume_assistant.job_analyzer import JobAnalysisError, JobAnalysisInputError, JobDescriptionAnalyzer
@@ -57,7 +63,9 @@ DEFAULT_ANALYSIS_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_description_analysis
 DEFAULT_JOB_MATCH_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_candidate_match.json'
 DEFAULT_SECTION_PLAN_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'resume_section_plan.json'
 DEFAULT_RESUME_JSON_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'tailored_resume.json'
+DEFAULT_COVER_LETTER_JSON_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'cover_letter.json'
 _DEFAULT_RENDER_RESUME_PDF = docx_renderer.render_resume_pdf
+_DEFAULT_RENDER_COVER_LETTER_PDF = docx_renderer.render_cover_letter_pdf
 
 
 class ExtractionConfigurationError(ValueError):
@@ -319,6 +327,12 @@ def _load_job_analysis_artifact(path) -> JobDescriptionAnalysis:
     return JobDescriptionAnalysis.model_validate_json(json.dumps(document))
 
 
+def _load_job_match_artifact(path) -> CandidateJobMatch:
+    text = read_artifact_text(path, artifact='candidate_job_match')
+    document = _parse_match_artifact(text, label='Job match artifact', schema_version='2.0.0')
+    return CandidateJobMatch.model_validate_json(json.dumps(document))
+
+
 def _load_candidate_evidence_artifact(
     path, *, include_publication: bool = False,
 ) -> CandidateEvidenceCatalog | tuple[
@@ -409,11 +423,7 @@ def run_plan_sections(
     with PrivateOutput(PROJECT_ROOT, output_path) as target:
         analysis = _load_job_analysis_artifact(analysis_path)
 
-        match_text = read_artifact_text(match_path, artifact='candidate_job_match')
-        match_document = _parse_match_artifact(
-            match_text, label='Job match artifact', schema_version='2.0.0'
-        )
-        match = CandidateJobMatch.model_validate_json(json.dumps(match_document))
+        match = _load_job_match_artifact(match_path)
 
         # Explicit readers already report controlled missing-input errors;
         # committed generation reads can also fail between existence and open.
@@ -479,7 +489,7 @@ def _load_section_plan_artifact(path) -> ResumeSectionPlan:
 
 
 def _reject_generation_aliases(
-    output_paths: list[Path], protected_paths: list[Path]
+    output_paths: list[Path], protected_paths: list[Path], *, label: str = 'Resume'
 ) -> None:
     '''Reject input aliases and a JSON/DOCX output collision without content reads.'''
     try:
@@ -495,15 +505,15 @@ def _reject_generation_aliases(
         )
     except (OSError, ValueError):
         raise PrivateInputError(
-            'Resume generation input/output artifact identity could not be checked.'
+            f'{label} generation input/output artifact identity could not be checked.'
         ) from None
     if aliases_input:
         raise ExtractionConfigurationError(
-            'Resume generation outputs must not alias an input artifact.'
+            f'{label} generation outputs must not alias an input artifact.'
         )
     if outputs_alias:
         raise ExtractionConfigurationError(
-            'Resume generation output paths must be distinct files.'
+            f'{label} generation output paths must be distinct files.'
         )
 
 
@@ -640,6 +650,136 @@ def run_generate_resume(
     return output_json_path, output_docx_path, artifact
 
 
+def run_generate_cover_letter(
+    plan_path: Path,
+    candidate_evidence_path: Path,
+    output_json_path: Path | None = None,
+    output_docx_path: Path | None = None,
+    output_pdf_path: Path | None = None,
+    *,
+    page_size: str = docx_renderer.DEFAULT_PAGE_SIZE,
+) -> tuple[Path, Path | None, CoverLetterArtifact]:
+    if output_docx_path is None and output_pdf_path is None:
+        raise ExtractionConfigurationError(
+            'At least one of --output-docx or --output-pdf must be provided.'
+        )
+    output_json_path = normalize_output_path(
+        PROJECT_ROOT,
+        output_json_path if output_json_path is not None else DEFAULT_COVER_LETTER_JSON_OUTPUT_PATH,
+    )
+    if output_docx_path is not None:
+        output_docx_path = normalize_output_path(PROJECT_ROOT, output_docx_path)
+    if output_pdf_path is not None:
+        output_pdf_path = normalize_output_path(PROJECT_ROOT, output_pdf_path)
+    docx_renderer.resolve_page_size(page_size)
+    if output_pdf_path is not None and docx_renderer.render_cover_letter_pdf is _DEFAULT_RENDER_COVER_LETTER_PDF:
+        docx_renderer.find_pdf_converter()
+
+    try:
+        plan_path = Path(os.path.abspath(os.fspath(plan_path)))
+        candidate_path = Path(os.path.abspath(os.fspath(candidate_evidence_path)))
+    except (TypeError, ValueError, OSError):
+        raise PrivateInputError(
+            'Cover letter generation input paths must be readable local file paths.'
+        ) from None
+
+    outputs = [output_json_path]
+    if output_docx_path is not None:
+        outputs.append(output_docx_path)
+    if output_pdf_path is not None:
+        outputs.append(output_pdf_path)
+    protected_paths = [plan_path, candidate_path]
+    _reject_generation_aliases(outputs, protected_paths, label='Cover letter')
+
+    json_target = PrivateOutput(PROJECT_ROOT, output_json_path)
+    docx_target = (
+        PrivateOutput(PROJECT_ROOT, output_docx_path)
+        if output_docx_path is not None else None
+    )
+    pdf_target = (
+        PrivateOutput(PROJECT_ROOT, output_pdf_path)
+        if output_pdf_path is not None else None
+    )
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(json_target)
+        if docx_target is not None:
+            stack.enter_context(docx_target)
+        if pdf_target is not None:
+            stack.enter_context(pdf_target)
+        plan = _load_section_plan_artifact(plan_path)
+
+        try:
+            snapshot, catalog, manifest, generation_id = _load_candidate_evidence_artifact(
+                candidate_path, include_publication=True,
+            )
+        except FileNotFoundError:
+            raise PrivateInputError(
+                'Candidate evidence artifact input file could not be found.'
+            ) from None
+
+        if manifest is not None:
+            bundle_key = publication_store.resolve_bundle_key(PROJECT_ROOT, candidate_path)
+            generation_dir = publication_store.generation_dir_path(
+                PROJECT_ROOT, bundle_key, generation_id
+            )
+            protected_paths.extend((
+                candidate_path,
+                generation_dir / 'catalog.json',
+                generation_dir / 'snapshot.json',
+            ))
+            _reject_generation_aliases(outputs, protected_paths, label='Cover letter')
+
+        client = AgentRouterClient(LLMConfig.from_env())
+        artifact = generate_cover_letter(
+            plan,
+            catalog,
+            snapshot,
+            manifest,
+            client,
+        )
+
+        payload = artifact.model_dump_json(indent=2, warnings='error')
+        restored = CoverLetterArtifact.model_validate_json(payload)
+        if restored != artifact:
+            raise AnalysisIntegrityError(
+                'Cover letter JSON round-trip validation failed.'
+            )
+
+        docx_bytes = (
+            docx_renderer.render_cover_letter_docx_bytes(artifact, page_size=page_size)
+            if docx_target is not None else None
+        )
+
+        # Recheck identities after generation/serialization, before publication.
+        _reject_generation_aliases(outputs, protected_paths, label='Cover letter')
+        json_target.ensure_current()
+        if docx_target is not None:
+            docx_target.ensure_current()
+        if pdf_target is not None:
+            pdf_target.ensure_current()
+
+        if pdf_target is not None and docx_target is None:
+            docx_renderer.render_cover_letter_pdf(
+                artifact, output_pdf_path, page_size=page_size
+            )
+            pdf_target.ensure_current()
+            json_target.write_json(payload)
+        else:
+            json_target.write_json(payload)
+            if docx_target is not None and docx_bytes is not None:
+                docx_target.write_bytes(docx_bytes)
+            if pdf_target is not None and output_pdf_path is not None:
+                docx_renderer.render_cover_letter_pdf(
+                    artifact,
+                    output_pdf_path,
+                    page_size=page_size,
+                    docx_path=output_docx_path,
+                )
+                pdf_target.ensure_current()
+
+    return output_json_path, output_docx_path, artifact
+
+
 def _print_generation_summary(
     artifact,
     output_docx_path,
@@ -668,6 +808,32 @@ def _print_generation_summary(
     print(f'  findings_error: {counts.get("error", 0)}')
     print(f'  findings_warning: {counts.get("warning", 0)}')
     # Export paths may now contain the candidate's name.
+    print('  output_json: written')
+    if output_docx_path is not None:
+        print('  output_docx: written')
+    if output_pdf_path is not None:
+        print('  output_pdf: written')
+
+
+def _print_cover_letter_summary(
+    artifact: CoverLetterArtifact,
+    output_docx_path,
+    output_pdf_path=None,
+) -> None:
+    report = artifact.validation
+    counts = {'error': 0, 'warning': 0}
+    for finding in report.findings:
+        counts[finding.severity] = counts.get(finding.severity, 0) + 1
+    print('Cover letter generation summary')
+    print(f'  schema_version: {artifact.schema_version}')
+    print(f'  prompt_version: {artifact.prompt_version}')
+    print(f'  plan_schema_version: {artifact.plan_schema_version}')
+    print(f'  model: {artifact.model}')
+    print(f'  header_source_evidence_records: {len(artifact.header.source_evidence_ids)}')
+    print(f'  word_count: {cover_letter_word_count(artifact)}')
+    print(f'  traceability_verified: {str(report.traceability_verified).lower()}')
+    print(f'  findings_error: {counts.get("error", 0)}')
+    print(f'  findings_warning: {counts.get("warning", 0)}')
     print('  output_json: written')
     if output_docx_path is not None:
         print('  output_docx: written')
@@ -950,6 +1116,41 @@ def main(argv=None) -> int:
         default=None,
         help='Optional emphasis/framing instructions (strictly subordinate to traceability).',
     )
+    cover_letter_parser = subparsers.add_parser(
+        'generate-cover-letter',
+        help='Generate a validated, evidence-bound cover letter JSON, DOCX, and/or PDF.',
+    )
+    cover_letter_parser.add_argument(
+        '--plan',
+        required=True,
+        help='Path to the validated schema-2.0.0 resume section plan JSON artifact.',
+    )
+    cover_letter_parser.add_argument(
+        '--candidate-evidence',
+        required=True,
+        help='Path to the validated candidate evidence manifest or catalog JSON artifact.',
+    )
+    cover_letter_parser.add_argument(
+        '--output-json',
+        default=str(DEFAULT_COVER_LETTER_JSON_OUTPUT_PATH),
+        help='Path for the validated cover letter JSON artifact.',
+    )
+    cover_letter_parser.add_argument(
+        '--output-docx',
+        default=None,
+        help='Optional path for the rendered cover letter DOCX artifact.',
+    )
+    cover_letter_parser.add_argument(
+        '--output-pdf',
+        default=None,
+        help='Optional path for the LibreOffice-converted cover letter PDF artifact.',
+    )
+    cover_letter_parser.add_argument(
+        '--page-size',
+        default=docx_renderer.DEFAULT_PAGE_SIZE,
+        choices=sorted(docx_renderer.PAGE_SIZES),
+        help=f'DOCX page size (default: {docx_renderer.DEFAULT_PAGE_SIZE}).',
+    )
     args = parser.parse_args(argv)
     if args.command == 'extract-master':
         try:
@@ -1143,6 +1344,53 @@ def main(argv=None) -> int:
             print(f'error: resume generation failed: {type(error).__name__}')
             return 3
         _print_generation_summary(artifact, docx_path, args.output_pdf)
+        return 0
+    if args.command == 'generate-cover-letter':
+        try:
+            _json_path, docx_path, artifact = run_generate_cover_letter(
+                plan_path=Path(args.plan),
+                candidate_evidence_path=Path(args.candidate_evidence),
+                output_json_path=Path(args.output_json),
+                output_docx_path=Path(args.output_docx) if args.output_docx is not None else None,
+                output_pdf_path=Path(args.output_pdf) if args.output_pdf is not None else None,
+                page_size=args.page_size,
+            )
+        except UnicodeDecodeError:
+            print('error: input file is not valid UTF-8 text')
+            return 2
+        except (
+            PrivateOutputError,
+            ExtractionConfigurationError,
+            AnalysisIntegrityError,
+            CoverLetterGenerationError,
+            docx_renderer.DocxRenderError,
+            PrivateInputError,
+            CandidateJobMatchError,
+        ) as error:
+            print(f'error: {error}')
+            return 2
+        except PublicationError as error:
+            print(f'error: {error}')
+            return 2
+        except ValidationError:
+            print('error: artifact validation failed: validation error')
+            return 2
+        except PydanticSerializationError:
+            print('error: cover letter generation serialization failed')
+            return 2
+        except LLMUnexpectedError as error:
+            print(f'error: cover letter generation failed: {error.failure_type}')
+            return 3
+        except LLMClientError as error:
+            print(f'error: {error}')
+            return 2
+        except OSError:
+            print('error: cover letter generation failed: OSError')
+            return 3
+        except Exception as error:  # noqa: BLE001
+            print(f'error: cover letter generation failed: {type(error).__name__}')
+            return 3
+        _print_cover_letter_summary(artifact, docx_path, args.output_pdf)
         return 0
     parser.print_help()
     return 2

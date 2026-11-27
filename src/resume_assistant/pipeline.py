@@ -14,11 +14,23 @@ from typing import Callable, Optional
 
 from resume_assistant import cli as cli_module
 from resume_assistant import docx_renderer, publication_reader
-from resume_assistant.filenames import build_resume_stem, known_company, usable_role
+from resume_assistant.cover_letter_generator import cover_letter_word_count
+from resume_assistant.filenames import (
+    build_cover_letter_stem,
+    build_resume_stem,
+    known_company,
+    usable_role,
+)
 from resume_assistant.job_text import sanitize_job_description_text
 from resume_assistant.llm_client import LLMProviderError
+from resume_assistant.matching_models import CandidateJobMatch
+from resume_assistant.models import CandidateEvidenceCatalog, DocumentSnapshot
+from resume_assistant.private_input import read_artifact_text
 from resume_assistant.private_output import PrivateOutput
+from resume_assistant.publication import PublicationManifest
 from resume_assistant.resume_generator import build_deterministic_header, sanitize_user_instructions
+from resume_assistant.section_plan import ExtractionGenerationIdentity, PlanBudgets, ResumeSectionPlan, build_plan_budgets
+from resume_assistant.section_planner import SectionPlanner
 
 _PDF_PAGE_PATTERN = re.compile(rb'/Type\s*/Page(?!s)\b')
 _SLUG_TOKEN_PATTERN = re.compile(r'[a-z0-9]+')
@@ -69,6 +81,48 @@ class PipelineResult:
     compact_tier: int = 0
     overflow_warning: Optional[str] = None
     resume_preview_markdown: str = ''
+
+
+@dataclass(frozen=True)
+class CoverLetterResult:
+    '''Run metrics and private artifact paths for a cover letter.'''
+
+    run_dir: Path
+    master_sha256: str
+    cache_hit: bool
+    prepared_cache_reused: bool
+    candidate_evidence_path: Path
+    job_description_path: Path
+    job_analysis_path: Path
+    job_match_path: Path
+    section_plan_path: Path
+    cover_letter_json_path: Path
+    cover_letter_docx_path: Path
+    cover_letter_pdf_path: Path
+    pdf_page_count: int
+    word_count: int
+    model: str
+    prompt_version: str
+    traceability_verified: bool
+    findings: tuple[tuple[str, str, str], ...]
+    cover_letter_text: str
+    overflow_warning: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class _PreparedPipeline:
+    master_sha256: str
+    cache_hit: bool
+    cached_evidence_path: Path
+    candidate_name: str
+    run_dir: Path
+    jd_txt_path: Path
+    job_analysis_path: Path
+    job_match_path: Path
+    section_plan_path: Path
+    match: CandidateJobMatch
+    plan: ResumeSectionPlan
+    prepared_reused: bool
 
 
 def _compute_file_sha256(path: Path) -> str:
@@ -239,6 +293,194 @@ def _ensure_private_file_mode(path: Path) -> None:
         os.chmod(path, 0o600)
 
 
+def _find_prepared_run(
+    runs_dir: Path, canonical_jd: str, budgets: PlanBudgets,
+    catalog: CandidateEvidenceCatalog, snapshot: DocumentSnapshot | None,
+    manifest: PublicationManifest | None,
+) -> tuple[Path, CandidateJobMatch, ResumeSectionPlan] | None:
+    '''Reuse the newest source-valid plan for these inputs and effective budgets.'''
+    try:
+        if runs_dir.is_symlink() or not runs_dir.is_dir():
+            return None
+        with os.scandir(runs_dir) as children:
+            entries = sorted(
+                (child.stat(follow_symlinks=False).st_mtime_ns, Path(child.path))
+                for child in children if child.is_dir(follow_symlinks=False)
+            )
+    except OSError:
+        return None
+
+    generation = ExtractionGenerationIdentity.from_manifest(manifest) if manifest else None
+    for _, run_dir in reversed(entries):
+        try:
+            if read_artifact_text(run_dir / 'job_description.txt', artifact='job_description') != canonical_jd:
+                continue
+            plan = cli_module._load_section_plan_artifact(run_dir / 'section_plan.json')
+            metadata = plan.planning_metadata
+            if (plan.budgets != budgets or metadata.extraction_generation != generation
+                    or metadata.source_candidate_source_sha256 != catalog.source_document.sha256):
+                continue
+            analysis = cli_module._load_job_analysis_artifact(run_dir / 'job_analysis.json')
+            if any(quote not in canonical_jd for _, quote in analysis.quoted_items()):
+                continue
+            match = cli_module._load_job_match_artifact(run_dir / 'job_match.json')
+            SectionPlanner(budgets).validate_result(
+                plan, analysis, match, catalog, snapshot,
+                manifest_available=manifest is not None, extraction_generation=generation,
+            )
+        except (ValueError, OSError):
+            # Partial, superseded, or corrupt runs are cache misses.
+            continue
+        return run_dir, match, plan
+    return None
+
+
+def _prepare_pipeline(
+    sanitized_job_description: str,
+    *,
+    root: Path,
+    processed_dir: Path,
+    resolved_master: Path,
+    resolved_preset: Optional[str],
+    max_projects: Optional[int],
+    max_certifications: Optional[int],
+    projects_first: bool,
+    include_languages: bool,
+    force_extract: bool,
+    reuse_prepared: bool,
+    notify: Callable[[float, str], None],
+    sleep_fn: Callable[[float], None],
+) -> _PreparedPipeline:
+    '''Run Stages 1 -> 4, optionally reusing a matching prepared run.'''
+    canonical_jd = sanitized_job_description.strip() + '\n'
+
+    stage = 1
+    try:
+        notify(0.05, 'Stage 1/5: Checking Master Resume evidence cache...')
+        master_sha256 = _compute_file_sha256(resolved_master)
+        sha12 = master_sha256[:12]
+        cache_dir = processed_dir / 'cache'
+        cached_evidence_path = cache_dir / f'candidate_evidence_{sha12}.json'
+        cached_snapshot_path = cache_dir / f'document_snapshot_{sha12}.json'
+        cache_hit = False
+        if not force_extract and cached_evidence_path.is_file() and not cached_evidence_path.is_symlink():
+            try:
+                snapshot, catalog, manifest, _ = publication_reader.load_committed_pair(
+                    root, cached_evidence_path
+                )
+                if catalog.source_document.sha256 == master_sha256:
+                    cache_hit = True
+            except Exception:  # noqa: BLE001
+                cache_hit = False
+
+        if not cache_hit:
+            notify(0.10, 'Stage 1/5: Extracting Master Resume evidence...')
+            catalog, snapshot, *_ = cli_module.run_extract_master(
+                master_path=resolved_master,
+                evidence_output_path=cached_evidence_path,
+                snapshot_output_path=cached_snapshot_path,
+            )
+            _ensure_private_file_mode(cached_evidence_path)
+        candidate_name = build_deterministic_header(catalog, snapshot).full_name
+    except Exception as error:  # noqa: BLE001
+        raise PipelineStageError(stage, error) from None
+
+    stage = 2
+    try:
+        if reuse_prepared and cache_hit:
+            budgets = build_plan_budgets(
+                preset=resolved_preset, max_projects=max_projects, max_certifications=max_certifications,
+                projects_first=projects_first, include_languages=include_languages,
+            )
+            reusable = _find_prepared_run(
+                processed_dir / 'runs', canonical_jd, budgets, catalog, snapshot, manifest,
+            )
+            if reusable is not None:
+                run_dir, match, plan = reusable
+                notify(0.60, 'Stages 2–4/5: Reusing validated job analysis, match and plan...')
+                return _PreparedPipeline(
+                    master_sha256, cache_hit, cached_evidence_path, candidate_name,
+                    run_dir, run_dir / 'job_description.txt', run_dir / 'job_analysis.json',
+                    run_dir / 'job_match.json', run_dir / 'section_plan.json', match, plan,
+                    prepared_reused=True,
+                )
+
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        initial_slug = _job_slug(sanitized_job_description)
+        run_dir = _allocate_run_dir(processed_dir, initial_slug, stamp=stamp)
+        jd_txt_path = run_dir / 'job_description.txt'
+        job_analysis_path = run_dir / 'job_analysis.json'
+
+        with PrivateOutput(root, jd_txt_path) as jd_target:
+            os.chmod(run_dir, 0o700)
+            jd_target.write_bytes(canonical_jd.encode('utf-8'))
+        _ensure_private_file_mode(jd_txt_path)
+
+        notify(0.25, 'Stage 2/5: Analyzing target job description...')
+        _in_p, _out_p, _model_name, analysis = _retry_on_503(
+            lambda: cli_module.run_analyze_job(
+                input_path=jd_txt_path,
+                output_path=job_analysis_path,
+                max_repair_attempts=1,
+            ),
+            sleep_fn=sleep_fn,
+        )
+        _ensure_private_file_mode(job_analysis_path)
+
+        refined_slug = _job_slug_from_analysis(analysis)
+        if refined_slug and refined_slug != initial_slug:
+            target_dir = _allocate_run_dir(processed_dir, refined_slug, stamp=stamp)
+            if not target_dir.exists():
+                run_dir.rename(target_dir)
+                run_dir = target_dir
+                jd_txt_path = run_dir / 'job_description.txt'
+                job_analysis_path = run_dir / 'job_analysis.json'
+
+        job_match_path = run_dir / 'job_match.json'
+        section_plan_path = run_dir / 'section_plan.json'
+
+        stage = 3
+        notify(0.45, 'Stage 3/5: Matching candidate evidence against job requirements...')
+        match = cli_module.run_match_job(
+            analysis_path=job_analysis_path,
+            candidate_evidence_path=cached_evidence_path,
+            output_path=job_match_path,
+        )
+        _ensure_private_file_mode(job_match_path)
+
+        stage = 4
+        notify(0.60, 'Stage 4/5: Planning sections and evidence budgets...')
+        _plan_path, plan = cli_module.run_plan_sections(
+            analysis_path=job_analysis_path,
+            match_path=job_match_path,
+            candidate_evidence_path=cached_evidence_path,
+            output_path=section_plan_path,
+            max_projects=max_projects,
+            max_certifications=max_certifications,
+            projects_first=projects_first,
+            include_languages=include_languages,
+            preset=resolved_preset,
+        )
+        _ensure_private_file_mode(section_plan_path)
+
+        return _PreparedPipeline(
+            master_sha256=master_sha256,
+            cache_hit=cache_hit,
+            cached_evidence_path=cached_evidence_path,
+            candidate_name=candidate_name,
+            run_dir=run_dir,
+            jd_txt_path=jd_txt_path,
+            job_analysis_path=job_analysis_path,
+            job_match_path=job_match_path,
+            section_plan_path=section_plan_path,
+            match=match,
+            plan=plan,
+            prepared_reused=False,
+        )
+    except Exception as error:  # noqa: BLE001
+        raise PipelineStageError(stage, error) from None
+
+
 def run_resume_pipeline(
     job_description_text: str,
     *,
@@ -282,103 +524,33 @@ def run_resume_pipeline(
     cli_module.PROJECT_ROOT = root
     stage = 1
     try:
-        notify(0.05, 'Stage 1/5: Checking Master Resume evidence cache...')
-        master_sha256 = _compute_file_sha256(resolved_master)
-        sha12 = master_sha256[:12]
-        cache_dir = processed_dir / 'cache'
-        cached_evidence_path = cache_dir / f'candidate_evidence_{sha12}.json'
-        cached_snapshot_path = cache_dir / f'document_snapshot_{sha12}.json'
-        cache_hit = False
-        if not force_extract and cached_evidence_path.is_file() and not cached_evidence_path.is_symlink():
-            try:
-                snapshot, catalog, _manifest, _gen_id = publication_reader.load_committed_pair(
-                    root, cached_evidence_path
-                )
-                if catalog.source_document.sha256 == master_sha256:
-                    cache_hit = True
-            except Exception:  # noqa: BLE001
-                cache_hit = False
-
-        if not cache_hit:
-            notify(0.10, 'Stage 1/5: Extracting Master Resume evidence...')
-            catalog, snapshot, *_ = cli_module.run_extract_master(
-                master_path=resolved_master,
-                evidence_output_path=cached_evidence_path,
-                snapshot_output_path=cached_snapshot_path,
-            )
-            _ensure_private_file_mode(cached_evidence_path)
-        candidate_name = build_deterministic_header(catalog, snapshot).full_name
-
-        stage = 2
-        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        initial_slug = _job_slug(sanitized_job_description)
-        run_dir = _allocate_run_dir(processed_dir, initial_slug, stamp=stamp)
-        jd_txt_path = run_dir / 'job_description.txt'
-        job_analysis_path = run_dir / 'job_analysis.json'
-
-        with PrivateOutput(root, jd_txt_path) as jd_target:
-            os.chmod(run_dir, 0o700)
-            jd_target.write_bytes(sanitized_job_description.strip().encode('utf-8') + b'\n')
-        _ensure_private_file_mode(jd_txt_path)
-
-        notify(0.25, 'Stage 2/5: Analyzing target job description...')
-        _in_p, _out_p, _model_name, analysis = _retry_on_503(
-            lambda: cli_module.run_analyze_job(
-                input_path=jd_txt_path,
-                output_path=job_analysis_path,
-                max_repair_attempts=1,
-            ),
-            sleep_fn=sleep_fn,
-        )
-        _ensure_private_file_mode(job_analysis_path)
-
-        refined_slug = _job_slug_from_analysis(analysis)
-        if refined_slug and refined_slug != initial_slug:
-            target_dir = _allocate_run_dir(processed_dir, refined_slug, stamp=stamp)
-            if not target_dir.exists():
-                run_dir.rename(target_dir)
-                run_dir = target_dir
-                jd_txt_path = run_dir / 'job_description.txt'
-                job_analysis_path = run_dir / 'job_analysis.json'
-
-        job_match_path = run_dir / 'job_match.json'
-        section_plan_path = run_dir / 'section_plan.json'
-        resume_json_path = run_dir / 'tailored_resume.json'
-
-        stage = 3
-        notify(0.45, 'Stage 3/5: Matching candidate evidence against job requirements...')
-        match = cli_module.run_match_job(
-            analysis_path=job_analysis_path,
-            candidate_evidence_path=cached_evidence_path,
-            output_path=job_match_path,
-        )
-        _ensure_private_file_mode(job_match_path)
-
-        stage = 4
-        notify(0.60, 'Stage 4/5: Planning sections and evidence budgets...')
-        _plan_path, plan = cli_module.run_plan_sections(
-            analysis_path=job_analysis_path,
-            match_path=job_match_path,
-            candidate_evidence_path=cached_evidence_path,
-            output_path=section_plan_path,
+        prepared = _prepare_pipeline(
+            sanitized_job_description,
+            root=root,
+            processed_dir=processed_dir,
+            resolved_master=resolved_master,
+            resolved_preset=resolved_preset,
             max_projects=max_projects,
             max_certifications=max_certifications,
             projects_first=projects_first,
             include_languages=include_languages,
-            preset=resolved_preset,
+            force_extract=force_extract,
+            reuse_prepared=False,
+            notify=notify,
+            sleep_fn=sleep_fn,
         )
-        _ensure_private_file_mode(section_plan_path)
 
         stage = 5
         notify(0.75, 'Stage 5/5: Generating tailored resume and rendering DOCX/PDF...')
-        job = plan.target_job_context
-        stem = build_resume_stem(candidate_name, job.role_title, job.company_name)
-        resume_docx_path = run_dir / f'{stem}.docx'
-        resume_pdf_path = run_dir / f'{stem}.pdf'
+        job = prepared.plan.target_job_context
+        stem = build_resume_stem(prepared.candidate_name, job.role_title, job.company_name)
+        resume_json_path = prepared.run_dir / 'tailored_resume.json'
+        resume_docx_path = prepared.run_dir / f'{stem}.docx'
+        resume_pdf_path = prepared.run_dir / f'{stem}.pdf'
         _json_out, _docx_out, artifact = _retry_on_503(
             lambda: cli_module.run_generate_resume(
-                plan_path=section_plan_path,
-                candidate_evidence_path=cached_evidence_path,
+                plan_path=prepared.section_plan_path,
+                candidate_evidence_path=prepared.cached_evidence_path,
                 output_json_path=resume_json_path,
                 output_docx_path=resume_docx_path,
                 output_pdf_path=resume_pdf_path,
@@ -415,6 +587,8 @@ def run_resume_pipeline(
                     break
 
         notify(0.95, 'Verifying output artifacts...')
+        match = prepared.match
+        plan = prepared.plan
         supported_reqs = tuple(
             req.requirement_text for req in match.requirements if req.status == 'supported'
         )
@@ -444,14 +618,14 @@ def run_resume_pipeline(
 
         notify(1.0, 'Done.')
         return PipelineResult(
-            run_dir=run_dir,
-            master_sha256=master_sha256,
-            cache_hit=cache_hit,
-            candidate_evidence_path=cached_evidence_path,
-            job_description_path=jd_txt_path,
-            job_analysis_path=job_analysis_path,
-            job_match_path=job_match_path,
-            section_plan_path=section_plan_path,
+            run_dir=prepared.run_dir,
+            master_sha256=prepared.master_sha256,
+            cache_hit=prepared.cache_hit,
+            candidate_evidence_path=prepared.cached_evidence_path,
+            job_description_path=prepared.jd_txt_path,
+            job_analysis_path=prepared.job_analysis_path,
+            job_match_path=prepared.job_match_path,
+            section_plan_path=prepared.section_plan_path,
             resume_json_path=resume_json_path,
             resume_docx_path=resume_docx_path,
             resume_pdf_path=resume_pdf_path,
@@ -473,7 +647,135 @@ def run_resume_pipeline(
             overflow_warning=overflow_warning,
             resume_preview_markdown=format_resume_preview_markdown(artifact),
         )
-    except Exception as error:
+    except PipelineStageError:
+        raise
+    except Exception as error:  # noqa: BLE001
+        raise PipelineStageError(stage, error) from None
+    finally:
+        cli_module.PROJECT_ROOT = previous_root
+
+
+def run_cover_letter_pipeline(
+    job_description_text: str,
+    *,
+    master_path: Optional[Path | str] = None,
+    preset: Optional[str] = 'compact-1page',
+    max_projects: Optional[int] = None,
+    max_certifications: Optional[int] = None,
+    projects_first: bool = False,
+    include_languages: bool = False,
+    page_size: str = docx_renderer.DEFAULT_PAGE_SIZE,
+    force_extract: bool = False,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    project_root: Optional[Path] = None,
+) -> CoverLetterResult:
+    '''Run Stages 1 -> 5 from raw JD text to validated cover-letter artifacts.'''
+
+    def notify(fraction: float, message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(fraction, message)
+
+    if not isinstance(job_description_text, str) or not job_description_text.strip():
+        raise PipelineInputError('Please paste a non-empty job description before generating.')
+    sanitized_job_description = sanitize_job_description_text(job_description_text)
+    if not sanitized_job_description.strip():
+        raise PipelineInputError('Please paste a non-empty job description before generating.')
+    docx_renderer.resolve_page_size(page_size)
+    resolved_preset = None if preset in (None, '', 'default') else preset
+
+    root = Path(os.path.abspath(project_root if project_root is not None else cli_module.PROJECT_ROOT))
+    processed_dir = root / 'data' / 'private' / 'processed'
+    resolved_master = (
+        Path(os.path.abspath(master_path))
+        if master_path is not None
+        else root / 'data' / 'private' / 'Master_Resume.docx'
+    )
+    previous_root = cli_module.PROJECT_ROOT
+    cli_module.PROJECT_ROOT = root
+    stage = 1
+    try:
+        prepared = _prepare_pipeline(
+            sanitized_job_description,
+            root=root,
+            processed_dir=processed_dir,
+            resolved_master=resolved_master,
+            resolved_preset=resolved_preset,
+            max_projects=max_projects,
+            max_certifications=max_certifications,
+            projects_first=projects_first,
+            include_languages=include_languages,
+            force_extract=force_extract,
+            reuse_prepared=True,
+            notify=notify,
+            sleep_fn=sleep_fn,
+        )
+
+        stage = 5
+        notify(0.75, 'Stage 5/5: Generating evidence-bound cover letter and rendering DOCX/PDF...')
+        job = prepared.plan.target_job_context
+        stem = build_cover_letter_stem(
+            prepared.candidate_name, job.role_title, job.company_name
+        )
+        cover_letter_json_path = prepared.run_dir / 'cover_letter.json'
+        cover_letter_docx_path = prepared.run_dir / f'{stem}.docx'
+        cover_letter_pdf_path = prepared.run_dir / f'{stem}.pdf'
+        _json_out, _docx_out, artifact = _retry_on_503(
+            lambda: cli_module.run_generate_cover_letter(
+                plan_path=prepared.section_plan_path,
+                candidate_evidence_path=prepared.cached_evidence_path,
+                output_json_path=cover_letter_json_path,
+                output_docx_path=cover_letter_docx_path,
+                output_pdf_path=cover_letter_pdf_path,
+                page_size=page_size,
+            ),
+            sleep_fn=sleep_fn,
+        )
+        for path in (
+            cover_letter_json_path,
+            cover_letter_docx_path,
+            cover_letter_pdf_path,
+        ):
+            _ensure_private_file_mode(path)
+
+        pdf_page_count = _count_pdf_pages(cover_letter_pdf_path)
+        word_count = cover_letter_word_count(artifact)
+        findings = tuple(
+            (f.severity, f.code, f.location) for f in artifact.validation.findings
+        )
+        overflow_warning = (
+            f'Cover letter PDF spans {pdf_page_count} pages; consider shortening the letter.'
+            if pdf_page_count > 1
+            else None
+        )
+        cover_letter_text = docx_renderer.build_cover_letter_plain_text(artifact)
+
+        notify(1.0, 'Done.')
+        return CoverLetterResult(
+            run_dir=prepared.run_dir,
+            master_sha256=prepared.master_sha256,
+            cache_hit=prepared.cache_hit,
+            prepared_cache_reused=prepared.prepared_reused,
+            candidate_evidence_path=prepared.cached_evidence_path,
+            job_description_path=prepared.jd_txt_path,
+            job_analysis_path=prepared.job_analysis_path,
+            job_match_path=prepared.job_match_path,
+            section_plan_path=prepared.section_plan_path,
+            cover_letter_json_path=cover_letter_json_path,
+            cover_letter_docx_path=cover_letter_docx_path,
+            cover_letter_pdf_path=cover_letter_pdf_path,
+            pdf_page_count=pdf_page_count,
+            word_count=word_count,
+            model=artifact.model,
+            prompt_version=artifact.prompt_version,
+            traceability_verified=artifact.validation.traceability_verified,
+            findings=findings,
+            cover_letter_text=cover_letter_text,
+            overflow_warning=overflow_warning,
+        )
+    except PipelineStageError:
+        raise
+    except Exception as error:  # noqa: BLE001
         raise PipelineStageError(stage, error) from None
     finally:
         cli_module.PROJECT_ROOT = previous_root
