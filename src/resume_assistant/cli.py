@@ -56,7 +56,6 @@ DEFAULT_ANALYSIS_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_description_analysis
 DEFAULT_JOB_MATCH_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'job_candidate_match.json'
 DEFAULT_SECTION_PLAN_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'resume_section_plan.json'
 DEFAULT_RESUME_JSON_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'tailored_resume.json'
-DEFAULT_RESUME_DOCX_OUTPUT_PATH = DEFAULT_PROCESSED_DIR / 'tailored_resume.docx'
 _DEFAULT_RENDER_RESUME_PDF = docx_renderer.render_resume_pdf
 
 
@@ -455,7 +454,6 @@ def run_plan_sections(
         _reject_section_plan_aliases(output_path, protected_paths)
         target.write_json(payload)
 
-        _print_plan_summary(plan, output_path)
     return output_path, plan
 
 
@@ -638,13 +636,11 @@ def run_generate_resume(
                 )
                 pdf_target.ensure_current()
 
-    _print_generation_summary(artifact, output_json_path, output_docx_path, output_pdf_path)
     return output_json_path, output_docx_path, artifact
 
 
 def _print_generation_summary(
     artifact,
-    output_json_path,
     output_docx_path,
     output_pdf_path=None,
 ) -> None:
@@ -670,11 +666,12 @@ def _print_generation_summary(
     print(f'  human_review_required: {str(report.human_review_required).lower()}')
     print(f'  findings_error: {counts.get("error", 0)}')
     print(f'  findings_warning: {counts.get("warning", 0)}')
-    print(f'  output_json: {output_json_path}')
+    # Export paths may now contain the candidate's name.
+    print('  output_json: written')
     if output_docx_path is not None:
-        print(f'  output_docx: {output_docx_path}')
+        print('  output_docx: written')
     if output_pdf_path is not None:
-        print(f'  output_pdf: {output_pdf_path}')
+        print('  output_pdf: written')
 
 
 def _print_match_summary(match: CandidateJobMatch, output_path) -> None:
@@ -1056,7 +1053,7 @@ def main(argv=None) -> int:
         return 0
     if args.command == 'plan-sections':
         try:
-            output_path, _plan = run_plan_sections(
+            output_path, plan = run_plan_sections(
                 analysis_path=Path(args.analysis),
                 match_path=Path(args.match),
                 candidate_evidence_path=Path(args.candidate_evidence),
@@ -1095,10 +1092,11 @@ def main(argv=None) -> int:
         except Exception as error:  # noqa: BLE001
             print(f'error: section planning failed: {type(error).__name__}')
             return 3
+        _print_plan_summary(plan, output_path)
         return 0
     if args.command == 'generate-resume':
         try:
-            run_generate_resume(
+            _json_path, docx_path, artifact = run_generate_resume(
                 plan_path=Path(args.plan),
                 candidate_evidence_path=Path(args.candidate_evidence),
                 output_json_path=Path(args.output_json),
@@ -1143,6 +1141,7 @@ def main(argv=None) -> int:
         except Exception as error:  # noqa: BLE001
             print(f'error: resume generation failed: {type(error).__name__}')
             return 3
+        _print_generation_summary(artifact, docx_path, args.output_pdf)
         return 0
     parser.print_help()
     return 2

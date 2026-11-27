@@ -40,7 +40,7 @@ Validated section plan + committed candidate evidence
     → deterministic local header (identity/contact stay local)
     → provider generation over selected non-contact evidence + technical skills
     → strict payload parse + evidence-scope/numeric-grounding validation
-    → mode-0600 tailored_resume.json + ATS-safe tailored_resume.docx / .pdf
+    → mode-0600 tailored_resume.json + ATS-safe DOCX / PDF downloads
       (with deterministic compact_tier 0 -> 1 -> 2 1-page A4 auto-fit in pipeline)
 ```
 
@@ -81,7 +81,7 @@ LibreOffice (`soffice`/`libreoffice` from `libreoffice-writer`).
 | `data/private/processed/job_candidate_match.json` | Match schema **2.0.0**, explicit component support and human-review requirement |
 | `data/private/processed/resume_section_plan.json` | Plan schema **2.0.0**, complete provenance and explicit summary bindings |
 | `data/private/processed/tailored_resume.json` | Generation schema **1.0.0**, deterministic local header, grounded payload, and validation report |
-| `data/private/processed/tailored_resume.docx` | ATS-safe single-column DOCX rendered from the validated generation artifact |
+| UI run: `<CandidateName>_<Role>[_<Company>].docx` / `.pdf` | Recruiter-ready downloads rendered from the validated artifact; the CLI honors explicit document paths |
 
 The committed generation files live below
 `data/private/processed/.extractions/<bundle_key>/generations/<generation_id>/`.
@@ -220,6 +220,11 @@ executes the full Stages 1–5 pipeline with SHA-256 Master Resume caching and
 deterministic `compact_tier` (`0 -> 1 -> 2`) 1-page A4 auto-fit, and launches an
 adaptive Light/Dark Gradio 6 UI bound strictly to `127.0.0.1` (`share=False`;
 under WSL, opens manually via the printed localhost URL).
+
+The two downloads share a safe ASCII stem derived locally from the Master
+Resume header and the analyzed JD, for example `JaneDoe_AI_Engineer_Acme.pdf`.
+An unknown company is omitted. Each PDF conversion uses its own temporary
+LibreOffice profile, including compact-tier re-renders.
 
 ## Inspect the plan
 

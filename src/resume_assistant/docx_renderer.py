@@ -709,12 +709,18 @@ def render_resume_pdf(
             source_docx = Path(docx_path)
         else:
             source_docx = temp_root / 'resume.docx'
-            source_docx.write_bytes(
+            _write_atomic_private_bytes(
+                source_docx,
                 render_docx_bytes(resume, page_size=page_size, compact_tier=compact_tier)
             )
 
+        # Writer is single-instance per user profile. Sharing the desktop
+        # profile can hand the request to a starting/exiting process instead
+        # of completing this export. The private temp tree owns both the
+        # profile and the conversion, including on the very first invocation.
         command = [
             binary,
+            f'-env:UserInstallation={(temp_root / "profile").as_uri()}',
             '--headless',
             '--nologo',
             '--nofirststartwizard',
@@ -727,25 +733,29 @@ def render_resume_pdf(
         try:
             completed = subprocess.run(
                 command,
-                capture_output=True,
-                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                umask=0o077,
                 timeout=PDF_CONVERSION_TIMEOUT_SECONDS,
                 check=False,
             )
-        except (subprocess.TimeoutExpired, OSError):
-            raise PdfRenderError(
-                'PDF conversion with LibreOffice failed or timed out.'
-            ) from None
+        except subprocess.TimeoutExpired:
+            raise PdfRenderError('LibreOffice PDF conversion timed out.') from None
+        except OSError:
+            raise PdfRenderError('LibreOffice could not start the PDF conversion.') from None
         if completed.returncode != 0:
             raise PdfRenderError(
                 f'LibreOffice PDF conversion failed (exit {completed.returncode}).'
             )
 
         produced_pdf = temp_outdir / f'{source_docx.stem}.pdf'
-        if not produced_pdf.is_file() or produced_pdf.stat().st_size == 0:
+        if not produced_pdf.is_file():
+            raise PdfRenderError('LibreOffice finished without producing a PDF.')
+        pdf_bytes = produced_pdf.read_bytes()
+        if not pdf_bytes.startswith(b'%PDF-'):
             raise PdfRenderError('LibreOffice did not produce a valid PDF output.')
 
-        _write_atomic_private_bytes(target_path, produced_pdf.read_bytes())
+        _write_atomic_private_bytes(target_path, pdf_bytes)
         return target_path
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)

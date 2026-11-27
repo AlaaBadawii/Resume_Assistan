@@ -2,29 +2,33 @@
 
 from __future__ import annotations
 
+import logging
 from html import escape
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import gradio as gr
+from gradio import processing_utils
 
-from resume_assistant.docx_renderer import DocxRenderError
-from resume_assistant.job_analyzer import JobAnalysisError, JobAnalysisInputError
+from resume_assistant.docx_renderer import DocxRenderError, PdfRenderError
+from resume_assistant.job_analyzer import JobAnalysisError
 from resume_assistant.llm_client import (
     LLMClientError,
     LLMConfigurationError,
-    LLMNetworkError,
     LLMProviderError,
-    LLMUnexpectedError,
 )
-from resume_assistant.matching import CandidateJobMatchError
-from resume_assistant.pipeline import PipelineInputError, PipelineResult, run_resume_pipeline
-from resume_assistant.private_input import PrivateInputError
+from resume_assistant.pipeline import PipelineInputError, PipelineResult, PipelineStageError, run_resume_pipeline
 from resume_assistant.private_output import PrivateOutputError
-from resume_assistant.publication import PublicationError
-from resume_assistant.resume_generator import ResumeGenerationError
-from resume_assistant.section_planner import SectionPlannerError
+from resume_assistant.resume_generator import ResumeGenerationError, UserInstructionsError
 
+_LOGGER = logging.getLogger(__name__)
+_STAGE_ADVICE = {
+    1: 'Verify that the local Master Resume is a readable DOCX and its evidence cache is writable.',
+    2: 'Check that the pasted job description is complete and the configured provider is available.',
+    3: 'Force re-extraction of the Master Resume to rebuild the evidence used for matching.',
+    4: 'Check the section budgets and force re-extraction to rebuild the plan from matching evidence.',
+    5: 'Check the private output directory permissions, free space, and LibreOffice Writer installation.',
+}
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 7860
 _INSTRUCTIONS_PLACEHOLDER = (
@@ -274,47 +278,60 @@ def format_result_markdown(result: PipelineResult, page_size: str) -> str:
 
 
 def _friendly_error_summary(error: Exception) -> tuple[str, str]:
-    '''Return a concise, safe (heading, detail) tuple for UI banners and Markdown.'''
+    '''Only application-owned guidance and a numeric HTTP status may reach logs/UI.'''
+    stage = None
+    if isinstance(error, PipelineStageError):
+        stage, error = error.stage, error.error
+    prefix = f'Stage {stage}/5 — ' if stage else 'Input validation — '
     if isinstance(error, PipelineInputError):
-        return 'Input Required', str(error)
+        return prefix + 'Input Required', _STAGE_ADVICE.get(stage, 'Please paste a non-empty job description.')
     if isinstance(error, LLMConfigurationError):
         return (
-            'Provider Configuration Missing or Invalid',
-            f'{error} Verify your .env provider API key, model, and base URL configuration.',
+            prefix + 'Provider Configuration Missing or Invalid',
+            'Verify the provider API key, model, and base URL in your .env configuration.',
         )
-    if isinstance(error, (LLMProviderError, LLMNetworkError, LLMUnexpectedError)):
-        return (
-            'Provider Request Failed',
-            f'The configured LLM provider could not complete the request ({error}). '
-            'Please retry shortly or check provider availability.',
-        )
-    if isinstance(
-        error,
-        (
-            LLMClientError,
-            ResumeGenerationError,
-            DocxRenderError,
-            JobAnalysisError,
-            JobAnalysisInputError,
-            CandidateJobMatchError,
-            SectionPlannerError,
-            PrivateInputError,
-            PrivateOutputError,
-            PublicationError,
-            ValueError,
-        ),
-    ):
-        return 'Generation Could Not Complete', str(error)
-    return (
-        'Unexpected Error',
-        f'The pipeline stopped due to {type(error).__name__}. '
-        'Check inputs and system prerequisites (such as LibreOffice) and try again.',
+    if isinstance(error, LLMClientError):
+        code = error.status_code if isinstance(error, LLMProviderError) else None
+        status = f' (HTTP {code})' if type(code) is int and 100 <= code <= 599 else ''
+        return (prefix + 'Provider Request Failed' + status,
+                'Check provider availability, credentials, and the request timeout.')
+    if isinstance(error, JobAnalysisError):
+        return (prefix + 'JD Analysis Failed',
+                'Check the pasted JD. The provider must return structured data with exact quotations from that text.')
+    if isinstance(error, UserInstructionsError):
+        return prefix + 'Invalid Instructions', 'Remove the candidate name and contact details from the optional instructions.'
+    if isinstance(error, ResumeGenerationError):
+        return (prefix + 'Resume Validation Failed',
+                'Verify the source evidence and use a model that follows the required schema and evidence citations.')
+    if isinstance(error, PdfRenderError):
+        return prefix + 'PDF Export Failed', _STAGE_ADVICE[5]
+    if isinstance(error, DocxRenderError):
+        return prefix + 'Document Layout Failed', 'Choose a supported page size (A4 or Letter) and layout preset.'
+    if isinstance(error, (PrivateOutputError, PermissionError)):
+        return prefix + 'Artifact Storage Failed', 'Check permissions and free space in the private output directory.'
+    return prefix + 'Generation Could Not Complete', _STAGE_ADVICE.get(stage, 'Check the job description and layout options.')
+
+
+def _error_outputs(heading: str, detail: str, *, blocked: bool = False):
+    _LOGGER.warning('%s: %s', heading, detail)
+    pill = 'ra-pill-warn' if blocked else 'ra-pill-error'
+    kpi = format_kpi_strip_html(
+        pages_value='Blocked' if blocked else 'Failed', pages_class=pill,
+        traceability_value='Error', traceability_class=pill, skills_value='0 items',
+        error_heading=heading, error_detail=detail,
     )
+    audit = f'### {heading}\n\n{detail}'
+    return kpi, None, None, audit, f'_No preview available due to generation error._\n\n{audit}'
 
 
-def _friendly_error_markdown(error: Exception) -> str:
-    heading, detail = _friendly_error_summary(error)
-    return f'### {heading}\n\n{detail}'
+def _cache_download(component: gr.File, path: str) -> str:
+    # Run Gradio's normal file authorization and cache copy within the banner
+    # boundary. File postprocessing later recognizes the already-cached path.
+    data = processing_utils.move_files_to_cache(component.postprocess(path), component, postprocess=True)
+    cached = data['path']
+    if not Path(cached).is_file():
+        raise FileNotFoundError
+    return cached
 
 
 def generate_resume_handler(
@@ -352,25 +369,7 @@ def generate_resume_handler(
             project_root=project_root,
         )
     except Exception as error:  # noqa: BLE001
-        error_heading, error_detail = _friendly_error_summary(error)
-        is_input_error = isinstance(error, PipelineInputError)
-        err_kpi = format_kpi_strip_html(
-            pages_value='Blocked' if is_input_error else 'Failed',
-            pages_class='ra-pill-warn' if is_input_error else 'ra-pill-error',
-            traceability_value='Error',
-            traceability_class='ra-pill-warn' if is_input_error else 'ra-pill-error',
-            skills_value='0 items',
-            error_heading=error_heading,
-            error_detail=error_detail,
-        )
-        error_md = _friendly_error_markdown(error)
-        return (
-            err_kpi,
-            None,
-            None,
-            error_md,
-            f'_No preview available due to generation error._\n\n{error_md}',
-        )
+        return _error_outputs(*_friendly_error_summary(error), blocked=isinstance(error, PipelineInputError))
 
     preview_md = result.resume_preview_markdown or '_No preview content available._'
     return (
@@ -457,8 +456,8 @@ def build_app(
                 with gr.Column(scale=6):
                     kpi_strip = gr.HTML(value=_initial_kpi_html())
                     with gr.Row():
-                        pdf_file = gr.File(label='Download PDF')
-                        docx_file = gr.File(label='Download DOCX')
+                        pdf_file = gr.File(label='Download PDF', interactive=False)
+                        docx_file = gr.File(label='Download DOCX', interactive=False)
                     with gr.Tabs():
                         with gr.Tab('Audit & JD Match'):
                             audit_markdown = gr.Markdown(
@@ -491,7 +490,7 @@ def build_app(
             re_extract,
             progress=gr.Progress(),
         ):
-            return generate_resume_handler(
+            kpi, pdf, docx, audit, preview = generate_resume_handler(
                 jd_text,
                 instructions,
                 selected_preset,
@@ -503,6 +502,16 @@ def build_app(
                 pipeline_fn=pipeline_fn,
                 project_root=project_root,
             )
+            if pdf is not None and docx is not None:
+                try:
+                    pdf = _cache_download(pdf_file, pdf)
+                    docx = _cache_download(docx_file, docx)
+                except (OSError, ValueError):
+                    return _error_outputs(
+                        'Stage 5/5 — Download Preparation Failed',
+                        'Start the UI from the project root and check access to the Gradio temporary directory.',
+                    )
+            return kpi, pdf, docx, audit, preview
 
         generate_btn.click(
             fn=_click,
@@ -516,6 +525,7 @@ def build_app(
                 force_extract,
             ],
             outputs=[kpi_strip, pdf_file, docx_file, audit_markdown, preview_markdown],
+            concurrency_limit=1,
         )
     return demo
 

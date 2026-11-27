@@ -70,6 +70,10 @@ class LLMNetworkError(LLMClientError):
 class LLMProviderError(LLMClientError):
     '''Provider rejected or failed the request; only the HTTP status is reported.'''
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class LLMResponseFormatError(LLMClientError):
     '''Provider response could not be interpreted; contents are never included.'''
@@ -394,7 +398,7 @@ class AgentRouterClient:
             error.close()
             if type(code) is not int:
                 raise LLMProviderError('provider request failed with an invalid HTTP status.') from None
-            raise LLMProviderError(f'provider request failed with HTTP {code}.') from None
+            raise LLMProviderError(f'provider request failed with HTTP {code}.', status_code=code) from None
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise LLMNetworkError(f'provider request failed ({type(error).__name__}).') from None
         except Exception as error:  # noqa: BLE001 - sanitize unexpected transport failures
@@ -403,7 +407,7 @@ class AgentRouterClient:
         if type(status) is not int:
             raise LLMResponseFormatError('provider returned an invalid HTTP status.')
         if not 200 <= status < 300:
-            raise LLMProviderError(f'provider request failed with HTTP {status}.')
+            raise LLMProviderError(f'provider request failed with HTTP {status}.', status_code=status)
 
         if not isinstance(body, bytes):
             raise LLMResponseFormatError('provider returned a malformed JSON response.')
