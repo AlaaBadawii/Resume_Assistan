@@ -32,7 +32,7 @@ from resume_assistant.publication_reader import (
 )
 from resume_assistant.resume_generator import (
     ResumeGenerationError,
-    _build_header,
+    build_deterministic_header,
     _build_llm_input,
     _numeric_tokens,
     _sanitize_repair_details,
@@ -40,7 +40,7 @@ from resume_assistant.resume_generator import (
     parse_tailored_resume_payload,
     validate_tailored_resume,
 )
-from resume_assistant.prompts import RESUME_GENERATION_PROMPT_VERSION
+from resume_assistant.prompts import RESUME_GENERATION_INSTRUCTIONS, RESUME_GENERATION_PROMPT_VERSION
 from resume_assistant.section_plan import ResumeSectionPlan, content_sha256
 from tests.fixtures import builders
 from tests.fixtures.jobs import SYNTHETIC_JOB_TEXT, grounded_job_payload
@@ -364,6 +364,7 @@ def test_generate_resume_end_to_end_produces_validated_json_and_docx(pipeline):
 
     generation_request = transport.calls[1]['payload']
     request_text = json.dumps(generation_request)
+    assert NAME not in request_text
     assert CONTACT_EMAIL not in request_text
     assert EXCLUDED_MARKER not in request_text
     assert 'Email:' not in generation_request['input']
@@ -598,7 +599,7 @@ def test_header_uses_snapshot_headers_footers_and_hyperlinks():
         headers=[DocumentBlock(type='paragraph', index=0, paragraph=header)],
         footers=[DocumentBlock(type='paragraph', index=0, paragraph=footer)],
     )
-    result = _build_header(SimpleNamespace(evidence_records=[]), snapshot)
+    result = build_deterministic_header(SimpleNamespace(evidence_records=[]), snapshot)
     assert result.full_name == 'Header Name'
     assert any('header@example.invalid' in line for line in result.contact_lines)
     assert any('candidate.example.invalid' in line for line in result.contact_lines)
@@ -618,7 +619,7 @@ def test_header_extracts_professional_identity_contacts_and_hyperlinks():
         )],
     )
     title_record = _evidence_record('Senior Software Engineer with Python experience')
-    header = _build_header(SimpleNamespace(
+    header = build_deterministic_header(SimpleNamespace(
         evidence_records=[title_record, contact_record, name_record],
     ))
 
@@ -641,7 +642,7 @@ def test_header_does_not_duplicate_already_visible_hyperlink_targets():
             HyperlinkBlock(text='Portfolio', url='https://ada.dev/me/'),
         ],
     )
-    header = _build_header(SimpleNamespace(evidence_records=[record]))
+    header = build_deterministic_header(SimpleNamespace(evidence_records=[record]))
 
     assert header.contact_lines == [
         'linkedin.com/in/ada',
@@ -666,7 +667,7 @@ def test_header_deduplicates_mailto_and_strips_verbose_labels():
         'Email',
         hyperlinks=[HyperlinkBlock(text='Email', url='mailto:ada2@example.invalid')],
     )
-    header = _build_header(SimpleNamespace(evidence_records=[record, mailto_only]))
+    header = build_deterministic_header(SimpleNamespace(evidence_records=[record, mailto_only]))
 
     assert header.contact_lines == [
         'Cairo, Egypt',
@@ -725,7 +726,7 @@ def test_header_excludes_non_header_section_hyperlinks_and_keeps_identity_links(
             ),
         ],
     )
-    header = _build_header(SimpleNamespace(evidence_records=[
+    header = build_deterministic_header(SimpleNamespace(evidence_records=[
         name_record,
         identity_link_record,
         preamble_contact_record,
@@ -750,7 +751,7 @@ def test_header_excludes_non_header_section_hyperlinks_and_keeps_identity_links(
     ('Ada Lovelace, Software Engineer', 'Ada Lovelace'),
 ])
 def test_header_name_detection_handles_unicode_hyphens_and_credentials(line, expected):
-    header = _build_header(SimpleNamespace(evidence_records=[
+    header = build_deterministic_header(SimpleNamespace(evidence_records=[
         _evidence_record(line, section=None, evidence_type=EvidenceType.UNCLASSIFIED),
         _evidence_record('Senior Software Engineer'),
     ]))
@@ -758,7 +759,7 @@ def test_header_name_detection_handles_unicode_hyphens_and_credentials(line, exp
 
 
 def test_header_allows_preamble_mononym_and_rejects_organization_lines():
-    header = _build_header(SimpleNamespace(evidence_records=[
+    header = build_deterministic_header(SimpleNamespace(evidence_records=[
         _evidence_record(
             'Acme Corp', section=None, evidence_type=EvidenceType.UNCLASSIFIED,
         ),
@@ -957,7 +958,7 @@ def test_generation_sends_aliases_and_resolves_real_ids(pipeline):
 def test_generation_repairs_once_after_schema_failure(pipeline):
     paths, commands, transport, plan, catalog, _snapshot, _manifest = pipeline
     transport.responses = [
-        {'headline_title': ''},
+        {'headline_title': '', NAME: 'unexpected'},
         _valid_payload(plan, catalog),
     ]
 
@@ -966,6 +967,7 @@ def test_generation_repairs_once_after_schema_failure(pipeline):
 
     repair_input = transport.calls[2]['payload']['input']
     assert 'APPLICATION_REPAIR_FEEDBACK' in repair_input
+    assert NAME not in repair_input
     assert CONTACT_EMAIL not in repair_input
     assert EXCLUDED_MARKER not in repair_input
     assert paths['resume_json'].exists()
@@ -1491,10 +1493,10 @@ def test_generate_resume_pdf_only_writes_0600_pdf_without_leftover_docx(pipeline
     assert not paths['resume_docx'].exists()
     assert list(paths['resume_json'].parent.glob('*.docx')) == []
     assert list(paths['resume_json'].parent.glob('.resume-pdf-*')) == []
-    assert recorded['command'][:6] == [
-        '/usr/bin/soffice', '--headless', '--nologo', '--nofirststartwizard',
-        '--convert-to', 'pdf',
-    ]
+    command = recorded['command']
+    assert command[0] == '/usr/bin/soffice'
+    assert {'--headless', '--nologo', '--nofirststartwizard'} <= set(command)
+    assert command[command.index('--convert-to') + 1] == 'pdf'
     assert recorded['timeout'] == 60
 
 
@@ -1754,10 +1756,8 @@ def test_docx_executive_layout_inline_skills_right_tab_dates_and_no_tech_stack_d
     assert any(ts.alignment == WD_TAB_ALIGNMENT.RIGHT for ts in proj_p.paragraph_format.tab_stops)
 
 
-def test_generation_prompt_v16_specifies_adaptive_capabilities_metrics_and_overlap_rules():
-    from resume_assistant.prompts import RESUME_GENERATION_INSTRUCTIONS
-
-    assert RESUME_GENERATION_PROMPT_VERSION == '1.6.0'
+def test_generation_prompt_specifies_adaptive_capabilities_metrics_and_overlap_rules():
+    assert RESUME_GENERATION_PROMPT_VERSION == '1.6.1'
     assert '38 to 52' in RESUME_GENERATION_INSTRUCTIONS
     assert '4 to 5 JD-adaptive' in RESUME_GENERATION_INSTRUCTIONS
     assert 'grounded engineering capabilities' in RESUME_GENERATION_INSTRUCTIONS
@@ -1767,11 +1767,21 @@ def test_generation_prompt_v16_specifies_adaptive_capabilities_metrics_and_overl
     assert '1 to 4 words each' in RESUME_GENERATION_INSTRUCTIONS
     assert 'Mandatory Quantified Metric Preservation' in RESUME_GENERATION_INSTRUCTIONS
     assert 'Cross-Section Overlap Condensation' in RESUME_GENERATION_INSTRUCTIONS
-    for tier in ('Mid-Level', 'Senior', 'Staff', 'Principal', 'Architect'):
+    for tier in ('Mid-Level', 'Senior', 'Staff', 'Lead', 'Principal', 'Architect'):
         assert tier in RESUME_GENERATION_INSTRUCTIONS
     assert 'selected_evidence_ids' in RESUME_GENERATION_INSTRUCTIONS
     assert '"languages"' in RESUME_GENERATION_INSTRUCTIONS
     assert 'metadata-only professional-experience timeline entries' in RESUME_GENERATION_INSTRUCTIONS
+
+
+def test_generation_prompt_aligns_headline_and_summary_opening_to_one_grounded_role():
+    instructions = ' '.join(RESUME_GENERATION_INSTRUCTIONS.split())
+    generation, repair = instructions.split('If APPLICATION_REPAIR_FEEDBACK is present,')
+    assert "target_job_context.role_title overlaps the candidate's selected evidence" in generation
+    assert 'unsupported, or too senior, choose the closest truthful, evidence-backed role' in generation
+    fields = 'headline_title and the opening clause of summary_sentences[0].text'
+    assert f'Use that same role in {fields}' in generation
+    assert f'If a correction changes the grounded role, update {fields} together' in repair
 
 
 def test_languages_section_renders_as_single_compact_inline_line_and_strips_bullets():

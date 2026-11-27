@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import stat
+import subprocess
 import warnings
 from pathlib import Path
 from unittest.mock import patch
 
 import gradio as gr
 import pytest
+from docx import Document
 
 import main as app_main
 from resume_assistant import cli as cli_module
 from resume_assistant import docx_renderer, pipeline as pipeline_module
 from resume_assistant import ui as ui_module
-from resume_assistant.llm_client import AgentRouterClient, LLMConfigurationError, LLMProviderError
+from resume_assistant.filenames import build_resume_stem
+from resume_assistant.job_analyzer import JobAnalysisQuotationError
+from resume_assistant.llm_client import AgentRouterClient, LLMConfig, LLMConfigurationError, LLMProviderError
 from resume_assistant.prompts import (
     RESUME_GENERATION_INSTRUCTIONS,
     RESUME_GENERATION_PROMPT_VERSION,
@@ -31,6 +37,7 @@ from tests.fixtures.jobs import SYNTHETIC_JOB_TEXT as JOB_TEXT, grounded_job_pay
 from tests.test_resume_generation import (
     CONTACT_EMAIL,
     EXCLUDED_MARKER,
+    NAME,
     OfflineResponsesTransport,
     _candidate_document,
     _loaded,
@@ -211,6 +218,8 @@ def test_user_instructions_sanitization_prompt_wiring_and_grounding_subordinatio
 
     default_hydrated = hydrate_plan_evidence(plan, catalog, snapshot, manifest)
     assert 'user_instructions' not in json.loads(default_hydrated.llm_input_text)
+    with pytest.raises(ResumeGenerationError, match='candidate name'):
+        hydrate_plan_evidence(plan, catalog, snapshot, manifest, user_instructions=f'Write for {NAME.upper()}.')
 
     guided_hydrated = hydrate_plan_evidence(
         plan, catalog, snapshot, manifest,
@@ -376,7 +385,117 @@ def test_pipeline_boilerplate_jd_slug_skips_generic_headings():
     assert 'objective' not in slug
 
 
-def test_gradio_ui_build_handlers_and_loopback_launch(tmp_path):
+@pytest.mark.parametrize(('name', 'role', 'company', 'expected'), [
+    ('Jane Doe', 'AI Engineer', 'Acme', 'JaneDoe_AI_Engineer_Acme'),
+    ('Jane Doe', 'AI Engineer', None, 'JaneDoe_AI_Engineer'),
+    ('Jane Doe', 'AI Engineer', '  ', 'JaneDoe_AI_Engineer'),
+    ('Jane Doe', 'AI Engineer', ' unKNOWN ', 'JaneDoe_AI_Engineer'),
+    ('Jane Doe', 'AI Engineer', 'N/A', 'JaneDoe_AI_Engineer'),
+    ('Jane Doe', '**Objective:**', 'Acme', 'JaneDoe_Tailored_Resume_Acme'),
+    ('Jane Doe', 'Summary', None, 'JaneDoe_Tailored_Resume'),
+    ('Jane Doe', 'Overview:', None, 'JaneDoe_Tailored_Resume'),
+    ('Jáne/Döe', '../AI_//Engineer\\', '../../Acme & Co.', 'JaneDoe_AI_Engineer_Acme_Co'),
+    (None, 'Backend Engineer', 'Acme', 'Resume_Backend_Engineer_Acme'),
+    ('', None, None, 'Resume_Tailored_Resume'),
+    ('   ', '../', None, 'Resume_Tailored_Resume'),
+])
+def test_recruiter_filename_stem(name, role, company, expected):
+    assert build_resume_stem(name, role, company) == expected
+
+
+def test_long_filename_keeps_company_and_trims_at_word_boundaries():
+    stem = build_resume_stem('Jane Doe', 'Senior ' + 'Cloud Platform ' * 50, 'Acme Labs')
+    assert len(stem) <= 80
+    assert stem.startswith('JaneDoe_Senior_') and stem.endswith('_Acme_Labs')
+    assert set(stem.split('_')[2:-2]) == {'Cloud', 'Platform'}
+    oversized = build_resume_stem('N' * 100, 'R' * 100, 'C' * 100)
+    assert len(oversized) == 80 and re.fullmatch(r'Nn*_Rr*_Cc*', oversized)
+
+
+@pytest.fixture
+def cold_ui_project(tmp_path, monkeypatch):
+    master = tmp_path / 'data/private/Master_Resume.docx'
+    master.parent.mkdir(parents=True)
+    _candidate_document().save(master)
+    transport = EndToEndOfflineTransport()
+    monkeypatch.setattr(LLMConfig, 'from_env', lambda: LLMConfig('offline-only'))
+    monkeypatch.setattr(cli_module, 'AgentRouterClient', lambda cfg: AgentRouterClient(cfg, http_post=transport))
+    monkeypatch.setenv('GRADIO_ANALYTICS_ENABLED', 'False')
+    monkeypatch.setenv('GRADIO_TEMP_DIR', str(tmp_path / 'downloads'))
+    return transport
+
+
+def test_first_gradio_click_exports_named_private_downloads(tmp_path, monkeypatch, cold_ui_project, capsys, caplog):
+    results = []
+
+    def pipeline(**kwargs):
+        result = pipeline_module.run_resume_pipeline(**kwargs)
+        results.append(result)
+        return result
+
+    app = ui_module.build_app(pipeline_fn=pipeline, project_root=tmp_path)
+    click = next(fn for fn in app.fns.values() if fn.fn and fn.fn.__name__ == '_click')
+    conversions = []
+
+    def writer(command, **kwargs):
+        # The shared default profile is busy on click 1. No retry or warm-up
+        # is needed with a per-export profile, even for the compact-tier pass.
+        if not any(arg.startswith('-env:UserInstallation=file:') for arg in command):
+            return subprocess.CompletedProcess(command, 1)
+        source = Path(command[-1])
+        conversions.append(source)
+        outdir = Path(command[command.index('--outdir') + 1])
+        count = 2 if len(conversions) == 1 else 1
+        (outdir / source.with_suffix('.pdf').name).write_bytes(b'%PDF-1.4\n' + b'/Type /Page\n' * count)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(docx_renderer, 'find_pdf_converter', lambda *args: 'offline-writer')
+    monkeypatch.setattr(subprocess, 'run', writer)
+    data = asyncio.run(app.process_api(click, [JOB_TEXT, '', 'compact-1page', 'A4', 3, 6, False]))['data']
+
+    result, = results
+    assert '1 / 1 (A4)' in data[0] and result.compact_tier == 1
+    assert result.traceability_verified and not result.cache_hit
+    assert conversions == [result.resume_docx_path] * 2
+    assert len(Document(result.resume_docx_path).tables) == 0
+    assert len(cold_ui_project.calls) == 2  # one JD analysis and one generation
+    requests = json.dumps([call['payload'] for call in cold_ui_project.calls])
+    for file, path in zip(data[1:3], (result.resume_pdf_path, result.resume_docx_path), strict=True):
+        assert path.stem == 'SyntheticCandidate_Senior_Backend_Engineer_Acme_Corp'
+        assert file['orig_name'] == path.name and file['url'].endswith(path.name)
+        cached = Path(file['path'])
+        assert cached.is_relative_to(tmp_path / 'downloads') and cached.name == path.name
+        assert cached.read_bytes() == path.read_bytes()
+        assert stat.S_IMODE(cached.stat().st_mode) == stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert result.resume_json_path.name == 'tailored_resume.json'
+    console = capsys.readouterr()
+    for private in (NAME, CONTACT_EMAIL, result.resume_docx_path.stem):
+        assert private not in requests and private not in console.out + console.err + caplog.text
+
+
+@pytest.mark.parametrize(('stage', 'call', 'error_type', 'action'), [
+    (1, 'run_extract_master', ValueError, 'readable DOCX'),
+    (2, 'run_analyze_job', JobAnalysisQuotationError, 'exact quotations'),
+    (3, 'run_match_job', ValueError, 're-extraction'),
+    (4, 'run_plan_sections', ValueError, 'budgets'),
+    (5, 'run_generate_resume', ResumeGenerationError, 'evidence citations'),
+    (5, 'run_generate_resume', docx_renderer.PdfRenderError, 'LibreOffice Writer'),
+])
+def test_unrecoverable_stage_failure_is_actionable_and_content_free(
+    tmp_path, monkeypatch, cold_ui_project, caplog, stage, call, error_type, action,
+):
+    def fail(**kwargs):
+        raise error_type(CONTACT_EMAIL)
+
+    monkeypatch.setattr(cli_module, call, fail)
+    kpi, pdf, docx, audit, preview = ui_module.generate_resume_handler(JOB_TEXT, project_root=tmp_path)
+    assert pdf is None and docx is None and 'role="alert"' in kpi
+    for output in (kpi, audit, preview, caplog.text):
+        assert f'Stage {stage}/5' in output and action in output
+        assert CONTACT_EMAIL not in output
+
+
+def test_gradio_ui_build_handlers_and_loopback_launch(tmp_path, caplog):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always', DeprecationWarning)
         theme = ui_module.build_theme()
@@ -413,7 +532,7 @@ def test_gradio_ui_build_handlers_and_loopback_launch(tmp_path):
     assert 'Provider Configuration Missing' in cfg_prev
 
     def _provider_down(**_kwargs):
-        raise LLMProviderError('provider request failed with HTTP 503.')
+        raise LLMProviderError('provider request failed with HTTP 503.', status_code=503)
 
     err_kpi, err_pdf, err_docx, err_audit, err_prev = ui_module.generate_resume_handler(
         JOB_TEXT, pipeline_fn=_provider_down
@@ -477,6 +596,17 @@ def test_gradio_ui_build_handlers_and_loopback_launch(tmp_path):
     assert '### Software Engineer' in ok_prev
     assert ok_pdf == str(fake_pdf)
     assert ok_docx == str(fake_docx)
+
+    # A Gradio path-policy failure normally happens after the handler. It
+    # must still clear both downloads and must not log the rejected path.
+    blocked_app = ui_module.build_app(pipeline_fn=_ok_pipeline)
+    blocked_app.has_launched = True
+    blocked_app.blocked_paths = [str(fake_pdf)]
+    click = next(fn for fn in blocked_app.fns.values() if fn.fn and fn.fn.__name__ == '_click')
+    data = asyncio.run(blocked_app.process_api(click, [JOB_TEXT, '', 'compact-1page', 'A4', 3, 6, False]))['data']
+    assert data[1:3] == [None, None]
+    assert 'Stage 5/5 — Download Preparation Failed' in data[0] and 'Gradio temporary directory' in caplog.text
+    assert str(fake_pdf) not in data[0] + caplog.text
 
     launch_calls = []
 

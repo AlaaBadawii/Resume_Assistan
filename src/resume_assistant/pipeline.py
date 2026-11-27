@@ -14,49 +14,31 @@ from typing import Callable, Optional
 
 from resume_assistant import cli as cli_module
 from resume_assistant import docx_renderer, publication_reader
+from resume_assistant.filenames import build_resume_stem, known_company, usable_role
 from resume_assistant.llm_client import LLMProviderError
 from resume_assistant.private_output import PrivateOutput
-from resume_assistant.resume_generator import sanitize_user_instructions
+from resume_assistant.resume_generator import build_deterministic_header, sanitize_user_instructions
 
-_TRANSIENT_HTTP_STATUS = '503'
 _PDF_PAGE_PATTERN = re.compile(rb'/Type\s*/Page(?!s)\b')
 _SLUG_TOKEN_PATTERN = re.compile(r'[a-z0-9]+')
-_BOILERPLATE_HEADINGS = frozenset({
-    'about',
-    'about the job',
-    'about the role',
-    'about us',
-    'company overview',
-    'description',
-    'job description',
-    'job objective',
-    'job overview',
-    'job summary',
-    'objective',
-    'overview',
-    'position objective',
-    'position overview',
-    'position summary',
-    'role description',
-    'role objective',
-    'role overview',
-    'role summary',
-    'summary',
-    'the opportunity',
-    'the role',
-    'what you will do',
-    'what youll do',
-    'who we are',
-})
 
 
 class PipelineInputError(ValueError):
     '''Controlled, content-free error for invalid pipeline inputs.'''
 
 
+class PipelineStageError(RuntimeError):
+    '''Identify the failed stage without interpolating exception text or paths.'''
+
+    def __init__(self, stage: int, error: Exception) -> None:
+        super().__init__(f'Stage {stage}/5 failed.')
+        self.stage = stage
+        self.error = error
+
+
 @dataclass(frozen=True)
 class PipelineResult:
-    '''Structured, PII-safe summary and artifact paths from a full pipeline run.'''
+    '''Run metrics and private artifact paths (document names can identify the candidate).'''
 
     run_dir: Path
     master_sha256: str
@@ -126,10 +108,7 @@ def _slug_from_text(text: str, *, max_tokens: int = 6, max_len: int = 44) -> str
 def _job_slug(job_description_text: str) -> str:
     for raw_line in job_description_text.splitlines():
         cleaned = re.sub(r'^[#*\-\s]+', '', raw_line).rstrip(':').strip()
-        if not cleaned:
-            continue
-        normalized = ' '.join(_SLUG_TOKEN_PATTERN.findall(cleaned.lower()))
-        if not normalized or normalized in _BOILERPLATE_HEADINGS:
+        if not usable_role(cleaned):
             continue
         slug = _slug_from_text(cleaned)
         if slug:
@@ -141,9 +120,9 @@ def _job_slug_from_analysis(analysis) -> Optional[str]:
     parts: list[str] = []
     company = getattr(getattr(analysis, 'company_name', None), 'value', None)
     role = getattr(getattr(analysis, 'role_title', None), 'value', None)
-    if isinstance(company, str) and company.strip():
+    if known_company(company):
         parts.append(company.strip())
-    if isinstance(role, str) and role.strip():
+    if usable_role(role):
         parts.append(role.strip())
     if not parts:
         return None
@@ -243,8 +222,7 @@ def _retry_on_503(
         try:
             return fn()
         except LLMProviderError as error:
-            is_503 = _TRANSIENT_HTTP_STATUS in str(error)
-            if is_503 and attempt < max_attempts:
+            if error.status_code == 503 and attempt < max_attempts:
                 sleep_fn(delay_seconds)
                 continue
             raise
@@ -296,37 +274,38 @@ def run_resume_pipeline(
         if master_path is not None
         else root / 'data' / 'private' / 'Master_Resume.docx'
     )
-    master_sha256 = _compute_file_sha256(resolved_master)
-    sha12 = master_sha256[:12]
-
-    cache_dir = processed_dir / 'cache'
-    cached_evidence_path = cache_dir / f'candidate_evidence_{sha12}.json'
-    cached_snapshot_path = cache_dir / f'document_snapshot_{sha12}.json'
-
     previous_root = cli_module.PROJECT_ROOT
     cli_module.PROJECT_ROOT = root
+    stage = 1
     try:
         notify(0.05, 'Stage 1/5: Checking Master Resume evidence cache...')
+        master_sha256 = _compute_file_sha256(resolved_master)
+        sha12 = master_sha256[:12]
+        cache_dir = processed_dir / 'cache'
+        cached_evidence_path = cache_dir / f'candidate_evidence_{sha12}.json'
+        cached_snapshot_path = cache_dir / f'document_snapshot_{sha12}.json'
         cache_hit = False
         if not force_extract and cached_evidence_path.is_file() and not cached_evidence_path.is_symlink():
             try:
-                _snap, cached_catalog, _manifest, _gen_id = publication_reader.load_committed_pair(
+                snapshot, catalog, _manifest, _gen_id = publication_reader.load_committed_pair(
                     root, cached_evidence_path
                 )
-                if cached_catalog.source_document.sha256 == master_sha256:
+                if catalog.source_document.sha256 == master_sha256:
                     cache_hit = True
             except Exception:  # noqa: BLE001
                 cache_hit = False
 
         if not cache_hit:
             notify(0.10, 'Stage 1/5: Extracting Master Resume evidence...')
-            cli_module.run_extract_master(
+            catalog, snapshot, *_ = cli_module.run_extract_master(
                 master_path=resolved_master,
                 evidence_output_path=cached_evidence_path,
                 snapshot_output_path=cached_snapshot_path,
             )
             _ensure_private_file_mode(cached_evidence_path)
+        candidate_name = build_deterministic_header(catalog, snapshot).full_name
 
+        stage = 2
         stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         initial_slug = _job_slug(job_description_text)
         run_dir = _allocate_run_dir(processed_dir, initial_slug, stamp=stamp)
@@ -360,9 +339,8 @@ def run_resume_pipeline(
         job_match_path = run_dir / 'job_match.json'
         section_plan_path = run_dir / 'section_plan.json'
         resume_json_path = run_dir / 'tailored_resume.json'
-        resume_docx_path = run_dir / 'tailored_resume.docx'
-        resume_pdf_path = run_dir / 'tailored_resume.pdf'
 
+        stage = 3
         notify(0.45, 'Stage 3/5: Matching candidate evidence against job requirements...')
         match = cli_module.run_match_job(
             analysis_path=job_analysis_path,
@@ -371,6 +349,7 @@ def run_resume_pipeline(
         )
         _ensure_private_file_mode(job_match_path)
 
+        stage = 4
         notify(0.60, 'Stage 4/5: Planning sections and evidence budgets...')
         _plan_path, plan = cli_module.run_plan_sections(
             analysis_path=job_analysis_path,
@@ -385,7 +364,12 @@ def run_resume_pipeline(
         )
         _ensure_private_file_mode(section_plan_path)
 
+        stage = 5
         notify(0.75, 'Stage 5/5: Generating tailored resume and rendering DOCX/PDF...')
+        job = plan.target_job_context
+        stem = build_resume_stem(candidate_name, job.role_title, job.company_name)
+        resume_docx_path = run_dir / f'{stem}.docx'
+        resume_pdf_path = run_dir / f'{stem}.pdf'
         _json_out, _docx_out, artifact = _retry_on_503(
             lambda: cli_module.run_generate_resume(
                 plan_path=section_plan_path,
@@ -424,69 +408,67 @@ def run_resume_pipeline(
                 pdf_page_count = _count_pdf_pages(resume_pdf_path)
                 if pdf_page_count <= 1:
                     break
+
+        notify(0.95, 'Verifying output artifacts...')
+        supported_reqs = tuple(
+            req.requirement_text for req in match.requirements if req.status == 'supported'
+        )
+        partial_reqs = tuple(
+            req.requirement_text for req in match.requirements if req.status == 'partially_supported'
+        )
+        gap_reqs = tuple(
+            req.requirement_text for req in match.requirements if req.status == 'no_evidence_found'
+        )
+        not_assessable_count = sum(
+            1 for req in match.requirements if req.status == 'not_assessable'
+        )
+        findings = tuple(
+            (f.severity, f.code, f.location) for f in artifact.validation.findings
+        )
+        skill_count = sum(len(group.skills) for group in artifact.content.skill_groups)
+        planned_counts = tuple(
+            (section.section_id, len(section.entries) or section.item_count)
+            for section in plan.ordered_sections
+        )
+        overflow_warning = (
+            f'Generated {page_size} PDF spans {pdf_page_count} pages under compact-1page; '
+            'consider lowering max projects or certifications.'
+            if resolved_preset == 'compact-1page' and pdf_page_count > 1
+            else None
+        )
+
+        notify(1.0, 'Done.')
+        return PipelineResult(
+            run_dir=run_dir,
+            master_sha256=master_sha256,
+            cache_hit=cache_hit,
+            candidate_evidence_path=cached_evidence_path,
+            job_description_path=jd_txt_path,
+            job_analysis_path=job_analysis_path,
+            job_match_path=job_match_path,
+            section_plan_path=section_plan_path,
+            resume_json_path=resume_json_path,
+            resume_docx_path=resume_docx_path,
+            resume_pdf_path=resume_pdf_path,
+            pdf_page_count=pdf_page_count,
+            model=artifact.model,
+            prompt_version=artifact.prompt_version,
+            traceability_verified=artifact.validation.traceability_verified,
+            findings=findings,
+            skill_count=skill_count,
+            supported_count=len(supported_reqs),
+            partial_count=len(partial_reqs),
+            gap_count=len(gap_reqs),
+            not_assessable_count=not_assessable_count,
+            supported_requirements=supported_reqs,
+            partial_requirements=partial_reqs,
+            gap_requirements=gap_reqs,
+            planned_section_counts=planned_counts,
+            compact_tier=compact_tier,
+            overflow_warning=overflow_warning,
+            resume_preview_markdown=format_resume_preview_markdown(artifact),
+        )
+    except Exception as error:
+        raise PipelineStageError(stage, error) from None
     finally:
         cli_module.PROJECT_ROOT = previous_root
-
-    notify(0.95, 'Verifying output artifacts...')
-    supported_reqs = tuple(
-        req.requirement_text for req in match.requirements if req.status == 'supported'
-    )
-    partial_reqs = tuple(
-        req.requirement_text
-        for req in match.requirements
-        if req.status == 'partially_supported'
-    )
-    gap_reqs = tuple(
-        req.requirement_text
-        for req in match.requirements
-        if req.status == 'no_evidence_found'
-    )
-    not_assessable_count = sum(
-        1 for req in match.requirements if req.status == 'not_assessable'
-    )
-    findings = tuple(
-        (f.severity, f.code, f.location) for f in artifact.validation.findings
-    )
-    skill_count = sum(len(group.skills) for group in artifact.content.skill_groups)
-    planned_counts = tuple(
-        (section.section_id, len(section.entries) or section.item_count)
-        for section in plan.ordered_sections
-    )
-    overflow_warning = (
-        f'Generated {page_size} PDF spans {pdf_page_count} pages under compact-1page; '
-        'consider lowering max projects or certifications.'
-        if resolved_preset == 'compact-1page' and pdf_page_count > 1
-        else None
-    )
-
-    notify(1.0, 'Done.')
-    return PipelineResult(
-        run_dir=run_dir,
-        master_sha256=master_sha256,
-        cache_hit=cache_hit,
-        candidate_evidence_path=cached_evidence_path,
-        job_description_path=jd_txt_path,
-        job_analysis_path=job_analysis_path,
-        job_match_path=job_match_path,
-        section_plan_path=section_plan_path,
-        resume_json_path=resume_json_path,
-        resume_docx_path=resume_docx_path,
-        resume_pdf_path=resume_pdf_path,
-        pdf_page_count=pdf_page_count,
-        model=artifact.model,
-        prompt_version=artifact.prompt_version,
-        traceability_verified=artifact.validation.traceability_verified,
-        findings=findings,
-        skill_count=skill_count,
-        supported_count=len(supported_reqs),
-        partial_count=len(partial_reqs),
-        gap_count=len(gap_reqs),
-        not_assessable_count=not_assessable_count,
-        supported_requirements=supported_reqs,
-        partial_requirements=partial_reqs,
-        gap_requirements=gap_reqs,
-        planned_section_counts=planned_counts,
-        compact_tier=compact_tier,
-        overflow_warning=overflow_warning,
-        resume_preview_markdown=format_resume_preview_markdown(artifact),
-    )

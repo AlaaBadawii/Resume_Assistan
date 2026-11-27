@@ -122,6 +122,10 @@ class ResumeGenerationError(ValueError):
         self.repair_details = repair_details or []
 
 
+class UserInstructionsError(ResumeGenerationError):
+    '''Optional instructions are not safe text for the provider.'''
+
+
 @dataclass(frozen=True)
 class HydratedGenerationInput:
     '''Locally derived header plus the compact provider input text.'''
@@ -591,10 +595,11 @@ def _iter_block_paragraphs(block):
         yield from _iter_table_paragraphs(table)
 
 
-def _build_header(
+def build_deterministic_header(
     catalog: CandidateEvidenceCatalog,
     snapshot: Optional[DocumentSnapshot] = None,
 ) -> DeterministicHeader:
+    '''Derive identity and contacts locally for rendering and export naming.'''
     header_records = sorted(
         (
             record for record in catalog.evidence_records
@@ -727,7 +732,7 @@ def sanitize_user_instructions(user_instructions: Optional[str]) -> Optional[str
     if user_instructions is None:
         return None
     if not isinstance(user_instructions, str):
-        raise ResumeGenerationError('User instructions must be text.')
+        raise UserInstructionsError('User instructions must be text.')
     cleaned = ' '.join(
         ''.join(ch if (ch >= ' ' or ch in '\n\t') else ' ' for ch in user_instructions).split()
     )
@@ -735,7 +740,7 @@ def sanitize_user_instructions(user_instructions: Optional[str]) -> Optional[str
         return None
     trimmed = cleaned[:MAX_USER_INSTRUCTIONS_CHARS].rstrip()
     if _pii_spans(trimmed):
-        raise ResumeGenerationError(
+        raise UserInstructionsError(
             'User instructions must not contain contact details or PII.'
         )
     return trimmed
@@ -746,7 +751,20 @@ def _build_llm_input(
     records: Mapping[str, EvidenceRecord],
     *,
     user_instructions: Optional[str] = None,
+    local_name: str = '',
 ) -> tuple[str, dict[str, str], dict[str, str]]:
+    # A name paragraph under Professional Identity can be classified as
+    # PROFESSIONAL_SUMMARY. Withhold name-bearing evidence before assigning
+    # aliases, rather than rewriting source claims and their citations.
+    name_words = local_name.partition(',')[0].split()
+    name_pattern = (
+        re.compile(r'(?<!\w)' + r'\s+'.join(map(re.escape, name_words)) + r'(?!\w)', re.IGNORECASE)
+        if name_words else None
+    )
+
+    def provider_text(text: str) -> str:
+        return '' if name_pattern and name_pattern.search(text) else _scrub_pii(text)
+
     selected = set(plan.selected_evidence_ids)
     for identifier in selected:
         record = records.get(identifier)
@@ -771,7 +789,7 @@ def _build_llm_input(
         if identifier not in safe_content:
             record = records[identifier]
             safe_content[identifier] = (
-                '' if _record_is_pii_only(record) else _scrub_pii(record.original_content)
+                '' if _record_is_pii_only(record) else provider_text(record.original_content)
             )
         return safe_content[identifier]
 
@@ -912,7 +930,7 @@ def _build_llm_input(
     identity_statements = []
     for statement in blueprint.identity_statements:
         identifiers = safe_ids(statement.evidence_ids)
-        text = _scrub_pii(statement.statement_text).strip()
+        text = provider_text(statement.statement_text).strip()
         if not identifiers or not text:
             continue
         identity_statements.append({
@@ -973,6 +991,8 @@ def _build_llm_input(
     )
 
     cleaned_instructions = sanitize_user_instructions(user_instructions)
+    if cleaned_instructions and name_pattern and name_pattern.search(cleaned_instructions):
+        raise UserInstructionsError('Remove the candidate name from the optional instructions.')
     payload = {
         'target_job_context': plan.target_job_context.model_dump(mode='json'),
         'ordered_sections': ordered_sections,
@@ -1000,11 +1020,12 @@ def hydrate_plan_evidence(
     '''Verify source/provenance bindings and build the compact provider input.'''
     _verify_sources(plan, catalog, manifest)
     records = _verify_provenance(plan, catalog)
+    header = build_deterministic_header(catalog, snapshot)
     llm_input_text, evidence_aliases, entry_aliases = _build_llm_input(
-        plan, records, user_instructions=user_instructions,
+        plan, records, user_instructions=user_instructions, local_name=header.full_name,
     )
     return HydratedGenerationInput(
-        header=_build_header(catalog, snapshot),
+        header=header,
         evidence_by_id=records,
         llm_input_text=llm_input_text,
         evidence_alias_by_id=evidence_aliases,
@@ -1017,7 +1038,10 @@ def _schema_repair_details(error: ValidationError) -> list[dict[str, str]]:
     for item in error.errors(
         include_url=False, include_context=False, include_input=False
     )[:20]:
-        location = '.'.join(str(part) for part in item.get('loc', ())) or 'payload'
+        path = item.get('loc', ())
+        if item['type'] == 'extra_forbidden':
+            path = path[:-1]  # an unexpected field name is arbitrary provider text
+        location = '.'.join(str(part) for part in path) or 'payload'
         detail = {
             'code': str(item.get('type', 'validation_error')),
             'location': location,
